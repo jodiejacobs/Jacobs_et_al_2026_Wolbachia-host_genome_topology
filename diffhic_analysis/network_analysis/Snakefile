@@ -1,0 +1,152 @@
+import os  
+import glob
+
+# Define paths for null and data
+null = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/null_distribution_analysis/null_distribution.csv'
+data = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv'
+
+# Samples to be analyzed
+samples = ['JW18-wRi', 'JW18-wWil', 'JW18-wMel', 'JW18-DOX']
+infection = ['wRi', 'wWil', 'wMel']
+replicates = ['1', '2']
+
+# Base directories
+data_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/processed_files'
+output_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis'
+
+rule all:
+    input:
+        # Final network analysis output
+        expand(f"{output_dir}/network_analysis/{{sample}}.network.tsv", sample=infection + ['null'])
+
+rule identify_contacts:
+    input:
+        cooler1 = lambda wildcards: f"{data_dir}/raw_data/{wildcards.sample}-1.matrix_1kb.mcool",
+        cooler2 = lambda wildcards: f"{data_dir}/raw_data/{wildcards.sample}-2.matrix_1kb.mcool"
+    output:
+        contacts = f"{output_dir}/contacts/{{sample}}_contacts.tsv"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        mkdir -p {output_dir}/contacts/
+        bash /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/extract_multi_resolution.sh \
+        {input.cooler1} {input.cooler2} {output.contacts}
+        '''
+
+rule diffhic_analysis:
+    input:
+        contacts = expand(f"{output_dir}/contacts/{{sample}}_contacts.tsv", sample=samples)
+    output:
+        results = expand(f"{output_dir}/diffhic_results/{{inf}}_results.csv", inf=infection),
+        null_results = f"{output_dir}/diffhic_results/null_results.csv"
+    params:
+        contacts_dir = f"{output_dir}/contacts",
+        output_dir = f"{output_dir}/diffhic_results",
+        resolution = "1000" 
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/analyze_multi_resolution_2.R \
+        --contacts_dir={params.contacts_dir} \
+        --output_dir={params.output_dir} \
+        --resolution={params.resolution}
+        '''
+
+rule null_distribution:
+    input:
+        contacts = expand(f"{output_dir}/contacts/{{sample}}_contacts.tsv", sample=samples)
+    output:
+        null_dist = null
+    params:
+        output_dir = os.path.dirname(null)
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        mkdir -p {params.output_dir}
+        python /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/generate_null_distribution.py \
+        --contacts {input.contacts} \
+        --output {output.null_dist}
+        '''
+
+rule filter_interactions:
+    input:
+        null = null,
+        data = expand(f"{output_dir}/diffhic_results/{{inf}}_results.csv", inf=infection)
+    output:
+        redfly_null = f"{output_dir}/elements/null.REDfly.tsv",
+        redfly_data = expand(f"{output_dir}/elements/{{inf}}.REDfly.tsv", inf=infection),
+        csbest_null = f"{output_dir}/elements/null.csbest.tsv",
+        csbest_data = expand(f"{output_dir}/elements/{{inf}}.csbest.tsv", inf=infection),
+        droid_null = f"{output_dir}/elements/null.droid.tsv",
+        droid_data = expand(f"{output_dir}/elements/{{inf}}.droid.tsv", inf=infection)
+    params:
+        output_dir = f"{output_dir}/elements"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        mkdir -p {params.output_dir}
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/filter_interactions.R \
+        --null {input.null} \
+        --data {input.data} \
+        --output_dir {params.output_dir}
+        '''
+
+rule network_creation:
+    input:
+        redfly = lambda wildcards: f"{output_dir}/elements/{wildcards.sample}.REDfly.tsv",
+        csbest = lambda wildcards: f"{output_dir}/elements/{wildcards.sample}.csbest.tsv",
+        droid = lambda wildcards: f"{output_dir}/elements/{wildcards.sample}.droid.tsv"
+    output:
+        redfly_network = f"{output_dir}/networks/{{sample}}.REDfly.network.tsv",
+        csbest_network = f"{output_dir}/networks/{{sample}}.csbest.network.tsv",
+        droid_network = f"{output_dir}/networks/{{sample}}.droid.network.tsv"
+    params:
+        output_dir = f"{output_dir}/networks"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        mkdir -p {params.output_dir}
+        python /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/create_networks.py \
+        --redfly {input.redfly} \
+        --csbest {input.csbest} \
+        --droid {input.droid} \
+        --output_prefix {params.output_dir}/{wildcards.sample}
+        '''
+
+rule network_analysis:
+    input:
+        redfly_network = f"{output_dir}/networks/{{sample}}.REDfly.network.tsv",
+        csbest_network = f"{output_dir}/networks/{{sample}}.csbest.network.tsv",
+        droid_network = f"{output_dir}/networks/{{sample}}.droid.network.tsv"
+    output:
+        network_analysis = f"{output_dir}/network_analysis/{{sample}}.network.tsv"
+    params:
+        output_dir = f"{output_dir}/network_analysis"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        mkdir -p {params.output_dir}
+        python /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/network_analysis/integrate_networks.py \
+        --redfly {input.redfly_network} \
+        --csbest {input.csbest_network} \
+        --droid {input.droid_network} \
+        --output {output.network_analysis}
+        '''
