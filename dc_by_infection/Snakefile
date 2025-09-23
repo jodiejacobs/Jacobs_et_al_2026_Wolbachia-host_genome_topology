@@ -1,0 +1,344 @@
+import os
+import glob
+
+# Run with:
+# mamba activate snakemake
+# snakemake --executor slurm --default-resources slurm_partition=medium runtime=720 mem_mb=1000000 -j 10 -s Snakefile
+
+# Configuration
+samples = ['JW18DOX', 'JW18wMel']
+conditions = ['DOX', 'wMel'] 
+infection = ['wMel']
+replicates = ['1', '2']
+chromosomes = ['2L', '2R', '3L', '3R', '4', 'X', 'Y']
+resolutions = [1000, 8000, 32000, 128000]
+RESOLUTIONS = resolutions
+
+# Base directories
+data_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/maps'
+output_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/results'
+ref_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/reference_files'
+
+# Reference files
+genome_file = "/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/reference_files/dm6.genome"
+sv_vcf = f"{ref_dir}/JW18_structural_variants.vcf"
+chip_dir = f"{ref_dir}/chip_peaks"
+enhancer_file = f"{ref_dir}/dm6_enhancers.bed"
+enhancer_classification = f"{ref_dir}/enhancer_classification.tsv"
+tss_file = f"{ref_dir}/dm6_tss.bed"
+has_sites_file = f"{ref_dir}/dm6_has_ces_sites.bed"
+
+# Conda environments
+COOLER_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+R_DIFFHIC_ENV = "/private/home/jomojaco/miniforge3/envs/diffhic"
+PYTHON_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+COOLTOOLS_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+
+rule all:
+    input:
+        f"{output_dir}/diffhic_results/summary/analysis_summary.txt",
+        f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        f"{output_dir}/chromatin_structure/chromatin_structure_analysis_summary.txt",
+        f"{output_dir}/enrichment/strain_specific_strain_plots.pdf",
+        f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
+        f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv"
+
+rule identify_contacts:
+    input:
+        cooler1 = f"{data_dir}/{{sample}}-1.matrix.mcool",
+        cooler2 = f"{data_dir}/{{sample}}-2.matrix.mcool"
+    output:
+        contacts = f"{output_dir}/contacts/{{sample}}_contacts.tsv"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLER_ENV}
+        
+        mkdir -p {output_dir}/contacts/
+        bash scripts/extract_multi_resolution_v5.sh \
+        {input.cooler1} {input.cooler2} {output.contacts}
+        '''
+
+rule diffhic_multi_resolution_analysis:
+    input:
+        contacts = expand(f"{output_dir}/contacts/{{sample}}_contacts.tsv", sample=samples)
+    output:
+        combined_results = f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        summary_report = f"{output_dir}/diffhic_results/summary/analysis_summary.txt",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv",
+        per_resolution = expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions_infectionJW18wMel.csv", 
+               resolution=RESOLUTIONS)
+    params:
+        contacts_dir = f"{output_dir}/contacts",
+        output_dir_param = f"{output_dir}/diffhic_results",
+        resolution_list = ",".join(map(str, RESOLUTIONS))
+    resources:
+        mem_mb=200000,
+        runtime=480
+    threads: 32
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {R_DIFFHIC_ENV}
+
+        Rscript scripts/analyze_multi_resolution_3.R \
+        --data_dir={params.contacts_dir} \
+        --output_dir={params.output_dir_param} \
+        --resolutions={params.resolution_list} \
+        --threads={threads} \
+        --reference=DOX \
+        --min_count=10 \
+        --fdr=0.01
+        '''
+
+rule filter_sv_interactions:
+    input:
+        interactions = f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        vcf = sv_vcf
+    output:
+        filtered = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv"
+    params:
+        quality = 10,
+        min_distance = 4000
+    resources:
+        mem_mb = 50000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        mkdir -p {output_dir}/sv_filtered/
+        
+        python scripts/filter_sv_interactions.py \
+            --interactions {input.interactions} \
+            --vcf {input.vcf} \
+            --output {output.filtered} \
+            --quality {params.quality} \
+            --min_distance {params.min_distance} \
+            --chunk_size 25000
+        '''
+
+rule chromatin_structure_analysis:
+    input:
+        mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
+        diffhic_results = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv"
+    output:
+        plot = f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
+        analysis_summary = f"{output_dir}/chromatin_structure/chromatin_structure_analysis_summary.txt"
+    params:
+        conditions = " ".join(conditions),
+        chromosomes = " ".join(chromosomes),
+        output_prefix = f"{output_dir}/chromatin_structure/chromatin_structure"
+    resources:
+        mem_mb = 200000,
+        runtime = 480
+    threads: 16
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLTOOLS_ENV}
+        
+        mkdir -p {output_dir}/chromatin_structure/
+        
+        mcool_files=({input.mcool_files})
+        
+        python scripts/call_tads_loops.py \
+            --mcool_files ${{mcool_files[@]}} \
+            --conditions {params.conditions} \
+            --diffhic_results {input.diffhic_results} \
+            --null_model {input.null_model} \
+            --chromosomes {params.chromosomes} \
+            --resolution_compartment 64000 \
+            --resolution_loop 4000 \
+            --fdr_threshold 0.1 \
+            --tad_window_size 50000 \
+            --output_prefix {params.output_prefix}
+        '''
+
+rule architectural_enrichment:
+    input:
+        interactions = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv",
+        genome = genome_file,
+        chip_peaks = f"{chip_dir}/.prepared"
+    output:
+        plot = f"{output_dir}/enrichment/strain_specific_strain_plots.pdf",
+        summary = f"{output_dir}/enrichment/strain_specific_strain_summary.txt"
+    params:
+        chip_dir_param = chip_dir,
+        output_prefix = f"{output_dir}/enrichment/strain_specific"
+    resources:
+        mem_mb = 100000,
+        runtime = 240
+    threads: 8
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        mkdir -p {output_dir}/enrichment/
+        
+        python scripts/strain_specific_architectural_enrichment.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --chip_dir {params.chip_dir_param} \
+            --genome {input.genome} \
+            --window_size 5000 \
+            --fdr_threshold 0.1 \
+            --output_prefix {params.output_prefix}
+        '''
+
+rule enhancer_class_analysis:
+    input:
+        enhancers = enhancer_file,
+        interactions = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv"
+    output:
+        distance_analysis = f"{output_dir}/enhancer_analysis/enhancer_distance_analysis.tsv",
+        enhancer_interactions = f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
+        statistical_comparisons = f"{output_dir}/enhancer_analysis/enhancer_statistical_comparisons.tsv"
+    params:
+        output_prefix = f"{output_dir}/enhancer_analysis/enhancer",
+        reference_condition = "DOX",
+        fdr_threshold = 0.1
+    resources:
+        mem_mb = 100000,
+        runtime = 240
+    threads: 8
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        mkdir -p {output_dir}/enhancer_analysis/
+        
+        classification_arg=""
+        if [ -f "{enhancer_classification}" ]; then
+            classification_arg="--classification {enhancer_classification}"
+        fi
+        
+        python scripts/enhancer_class_analysis.py \
+            --enhancers {input.enhancers} \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            $classification_arg \
+            --fdr_threshold {params.fdr_threshold} \
+            --reference_condition {params.reference_condition} \
+            --output_prefix {params.output_prefix}
+        '''
+
+rule x_chromosome_analysis:
+    input:
+        has_sites = has_sites_file,
+        mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
+        interaction_file = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv"
+    output:
+        summary = f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
+        plots = f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
+        has_contacts = f"{output_dir}/x_analysis/x_regulation_has_contact_comparison.tsv",
+        compartment_changes = f"{output_dir}/x_analysis/x_regulation_x_compartment_changes.tsv"
+    params:
+        conditions = " ".join(conditions),
+        resolution = 8000,
+        output_prefix = f"{output_dir}/x_analysis/x_regulation"
+    resources:
+        mem_mb = 200000,
+        runtime = 480
+    threads: 16
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLTOOLS_ENV}
+        
+        mkdir -p {output_dir}/x_analysis/
+        
+        mcool_files=({input.mcool_files})
+        
+        python scripts/x_chromosome_analysis.py \
+            --has_sites {input.has_sites} \
+            --mcool_files ${{mcool_files[@]}} \
+            --conditions {params.conditions} \
+            --interaction_file {input.interaction_file} \
+            --resolution {params.resolution} \
+            --output_prefix {params.output_prefix}
+        '''
+
+rule prepare_genome_file:
+    output:
+        genome_file
+    shell:
+        '''
+        mkdir -p $(dirname {output})
+        echo -e "2L\t23513712\n2R\t25286936\n3L\t28110227\n3R\t32079331\n4\t1348131\nX\t23542271\nY\t3667352" > {output}
+        '''
+
+rule prepare_chip_peaks:
+    input:
+        chip_dir = chip_dir
+    output:
+        marker = f"{chip_dir}/.prepared"
+    shell:
+        '''
+        mkdir -p {chip_dir}
+        
+        if [ ! -d "{chip_dir}" ] || [ -z "$(ls -A {chip_dir}/*.bed* 2>/dev/null)" ]; then
+            echo "Warning: No ChIP-seq files found in {chip_dir}"
+            mkdir -p {chip_dir}
+            echo -e "2L\t1000\t2000\tCTCF_peak1" > {chip_dir}/placeholder.bed
+        fi
+        
+        for file in {chip_dir}/*.bed; do
+            if [ -f "$file" ]; then
+                if [[ ! -f "${{file}}.sorted" ]]; then
+                    sort -k1,1 -k2,2n "$file" > "${{file}}.sorted"
+                    mv "${{file}}.sorted" "$file"
+                fi
+            fi
+        done
+        
+        touch {output.marker}
+        '''
+
+rule create_placeholder_files:
+    output:
+        enhancer = enhancer_file,
+        tss = tss_file,
+        has_sites = has_sites_file,
+        sv_vcf = sv_vcf
+    shell:
+        '''
+        mkdir -p {ref_dir}
+        
+        if [ ! -f {output.enhancer} ]; then
+            echo -e "2L\t10000\t12000\tenhancer1\t100\t+\thousekeeping" > {output.enhancer}
+        fi
+        
+        if [ ! -f {output.tss} ]; then
+            echo -e "2L\t15000\t15001\ttss1\t100\t+" > {output.tss}
+        fi
+        
+        if [ ! -f {output.has_sites} ]; then
+            echo -e "X\t100000\t101000\thas1\t100\t+" > {output.has_sites}
+        fi
+        
+        if [ ! -f {output.sv_vcf} ]; then
+            echo -e "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO" > {output.sv_vcf}
+            echo -e "2L\t1000000\t.\tN\t<DEL>\t60\tPASS\tSVTYPE=DEL;END=1001000" >> {output.sv_vcf}
+        fi
+        '''
+
+rule clean:
+    shell:
+        '''
+        rm -rf {output_dir}/temp_*
+        rm -rf {output_dir}/*_temp_dir
+        find {output_dir} -name "*.log" -delete
+        '''
