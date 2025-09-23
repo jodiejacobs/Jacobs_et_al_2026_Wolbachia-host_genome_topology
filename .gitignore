@@ -10,3 +10,10 @@ dmelanogaster_sv/svim/*
 dmelanogaster_sv/svim_output/*
 dc_by_infection/.snakemake/*
 dc_by_infection/.snakemake/
+*.fastq*
+*.bam
+*.sam
+*.vcf*
+*.bed
+*/output/
+*_output/
