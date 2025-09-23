@@ -1,0 +1,441 @@
+import os
+import glob
+
+# Run with:
+# mamba activate snakemake
+# snakemake --executor slurm --default-resources slurm_partition=medium runtime=720 mem_mb=1000000 -j 10 -s Snakefile
+
+# Configuration
+samples = ['JW18DOX','JW18wMel', 'JW18wRi', 'JW18wWil']
+conditions = ['DOX','wMel' ,'wRi', 'wWil'] 
+infection = ['wMel', 'wRi','wWil']
+replicates = ['1', '2']
+chromosomes = ['2L', '2R', '3L', '3R', '4', 'X', 'Y']
+resolutions = [1000, 8000, 32000, 128000]
+RESOLUTIONS = resolutions  # Alias for compatibility
+
+# Base directories
+data_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/maps'
+output_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results'
+ref_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/reference_files'
+
+# Reference files
+genome_file = "/private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/reference_files/dm6.genome"
+sv_vcf = f"{ref_dir}/JW18_structural_variants.vcf"
+chip_dir = f"{ref_dir}/chip_peaks"
+enhancer_file = f"{ref_dir}/dm6_enhancers.bed"
+enhancer_classification = f"{ref_dir}/enhancer_classification.tsv"  # Optional
+tss_file = f"{ref_dir}/dm6_tss.bed"
+has_sites_file = f"{ref_dir}/dm6_has_ces_sites.bed"
+
+# Conda environments
+COOLER_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+R_DIFFHIC_ENV = "/private/home/jomojaco/miniforge3/envs/diffhic"
+PYTHON_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+COOLTOOLS_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+
+# Define the complete workflow
+rule all:
+    input:
+        # Multi-resolution diffHic analysis outputs
+        expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions_infectionJW18wMel.csv", 
+               resolution=RESOLUTIONS),
+        f"{output_dir}/diffhic_results/summary/analysis_summary.txt",
+        f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        
+        # SV-filtered interactions
+        f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        
+        # Chromatin structure analysis using cooltools
+        f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv",
+        # f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv",
+        # f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv",
+        # f"{output_dir}/chromatin_structure/chromatin_structure_loop_comparison.tsv",
+        
+        # Architectural protein enrichment
+        # f"{output_dir}/enrichment/architectural_enrichment_analysis.pdf",
+        f"{output_dir}/enrichment/architectural_strain_plots.pdf",
+        
+        # Enhancer class analysis
+        f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
+        # f"{output_dir}/enhancer_analysis/E-TSS_comparisons.tsv",
+        # f"{output_dir}/enhancer_analysis/E-E_comparisons.tsv",
+        
+        # X chromosome analysis
+        f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
+        f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
+        
+        # # Wolbachia genome analysis
+        # f"{output_dir}/wolbachia_analysis/wolbachia_genome_analysis.pdf",
+        # f"{output_dir}/wolbachia_analysis/strain_comparisons.tsv",
+        
+        # Summary report
+        # f"{output_dir}/comprehensive_analysis_report.html"
+
+# Original rules for contact extraction
+rule identify_contacts:
+    input:
+        cooler1 = lambda wildcards: f"{data_dir}/{wildcards.sample}-1.matrix.mcool",
+        cooler2 = lambda wildcards: f"{data_dir}/{wildcards.sample}-2.matrix.mcool"
+    output:
+        contacts = f"{output_dir}/contacts/{{sample}}_contacts.tsv"
+    resources: 
+        mem_mb=100000,
+        runtime=200
+    threads: 16  
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLER_ENV}
+        
+        mkdir -p {output_dir}/contacts/
+        bash scripts/extract_multi_resolution_v5.sh \
+        {input.cooler1} {input.cooler2} {output.contacts}
+        '''
+
+# Rule to run diffHic analysis for each resolution separately
+rule diffhic_analysis_per_resolution:
+    input:
+        contacts = expand(f"{output_dir}/contacts/{{sample}}_contacts.tsv", sample=samples)
+    output:
+        results = f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions_infectionJW18wMel.csv",
+        summary = f"{output_dir}/diffhic_results/res_{{resolution}}/results_summary_infectionJW18wMel.txt"
+    params:
+        contacts_dir = f"{output_dir}/contacts",
+        output_dir = f"{output_dir}/diffhic_results",
+        resolution = "{resolution}"
+    resources:
+        mem_mb=lambda wildcards: 100000 if int(wildcards.resolution) <= 8000 else 200000,
+        runtime=180
+    threads: 32
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {R_DIFFHIC_ENV}
+
+        Rscript scripts/analyze_single_resolution.R \
+        --data_dir={params.contacts_dir} \
+        --output_dir={params.output_dir} \
+        --resolution={params.resolution} \
+        --threads={threads} \
+        --reference=DOX
+        '''
+
+rule combine_diffhic_results: # This needs to be updated to retain metadata from each resolution
+    input:
+        results = expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions_infectionJW18wMel.csv", 
+                        resolution=RESOLUTIONS)
+    output:
+        combined_results = f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        summary_report = f"{output_dir}/diffhic_results/summary/analysis_summary.txt",
+        summary_table = f"{output_dir}/diffhic_results/summary/detailed_summary.csv"
+    params:
+        output_dir = f"{output_dir}/diffhic_results",
+        resolution_list = ",".join(map(str, RESOLUTIONS))  # ← move this here
+    resources:
+        mem_mb=50000,
+        runtime=60
+    threads: 8
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {R_DIFFHIC_ENV}
+
+        Rscript scripts/combine_diffhic_results.R \
+        --results_dir={params.output_dir} \
+        --resolutions={params.resolution_list}
+        '''
+
+# Filter interactions based on structural variants - UPDATED
+rule filter_sv_interactions:
+    input:
+        interactions = f"{output_dir}/diffhic_results/summary/all_results_combined.csv",
+        vcf = sv_vcf
+    output:
+        filtered = f"{output_dir}/sv_filtered/combined_filtered_insteractions.csv"
+    params:
+        quality = 10,
+        min_distance = 4000
+    resources:
+        mem_mb = 50000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/filter_sv_interactions.py \
+            --interactions {input.interactions} \
+            --vcf {input.vcf} \
+            --output {output.filtered} \
+            --quality {params.quality} \
+            --min_distance {params.min_distance} \
+            --chunk_size 25000
+        '''
+
+# Chromatin structure analysis using cooltools - calculates 
+# Chromatin structure analysis using diffHic results (no cooltools insulation)
+rule chromatin_structure_analysis:
+    input:
+        mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
+        diffhic_results = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv"
+    output:
+        plot = f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
+        analysis_summary = f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv"
+    params:
+        conditions = " ".join(conditions),
+        chromosomes = " ".join(chromosomes),
+        output_prefix = f"{output_dir}/chromatin_structure/chromatin_structure"
+    resources:
+        mem_mb = 200000,
+        runtime = 480
+    threads: 16
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLTOOLS_ENV}
+        
+        mcool_files=({input.mcool_files})
+        
+        python scripts/call_tads_loops.py \
+            --mcool_files ${{mcool_files[@]}} \
+            --conditions {params.conditions} \
+            --diffhic_results {input.diffhic_results} \
+            --null_model {input.null_model} \
+            --chromosomes {params.chromosomes} \
+            --resolution_compartment 64000 \
+            --resolution_loop 4000 \
+            --fdr_threshold 0.1 \
+            --tad_window_size 50000 \
+            --output_prefix {params.output_prefix}
+        '''
+
+# Architectural protein enrichment analysis - UPDATED
+rule architectural_enrichment:
+    input:
+        interactions = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/res_1000/null_model_results.csv",  # or appropriate resolution
+        genome = genome_file,
+        chip_peaks = f"{chip_dir}/.prepared"
+    output:
+        plot = f"{output_dir}/enrichment/strain_specific_strain_plots.pdf",
+        summary = f"{output_dir}/enrichment/architectural_strain_plots.pdf"
+    params:
+        chip_dir = chip_dir,
+        output_prefix = f"{output_dir}/enrichment/architectural"
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/strain_specific_architectural_enrichment.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --chip_dir {params.chip_dir} \
+            --genome {input.genome} \
+            --window_size 5000 \
+            --fdr_threshold 0.1 \
+            --output_prefix {params.output_prefix}
+        '''
+
+# Enhancer class analysis - UPDATED
+# Enhanced enhancer class analysis with null model - UPDATED
+rule enhancer_class_analysis:
+    input:
+        enhancers = enhancer_file,
+        interactions = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+        null_model = f"{output_dir}/diffhic_results/summary/null_model_results.csv"
+    output:
+        distance_analysis = f"{output_dir}/enhancer_analysis/enhancer_distance_analysis.tsv",
+        enhancer_interactions = f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
+    params:
+        classification = enhancer_classification if os.path.exists(enhancer_classification) else "",
+        output_prefix = f"{output_dir}/enhancer_analysis/enhancer",
+        reference_condition = "DOX",
+        fdr_threshold = 0.1
+    resources:
+        mem_mb = 100000,
+        runtime = 240
+    threads: 8
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/enhancer_class_analysis.py \
+            --enhancers {input.enhancers} \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --classification reference_files/enhancer_classification.tsv \
+            --fdr_threshold {params.fdr_threshold} \
+            --reference_condition DOX \
+            --output_prefix {params.output_prefix}
+
+        '''
+
+# X chromosome regulation analysis - UPDATED
+rule x_chromosome_analysis:
+    input:
+        has_sites = has_sites_file,
+        mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
+        interaction_file = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv"
+    output:
+        summary = f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
+        plots = f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
+        has_contacts = f"{output_dir}/x_analysis/x_regulation_has_contact_comparison.tsv",
+        compartment_changes = f"{output_dir}/x_analysis/x_regulation_x_compartment_changes.tsv"
+    params:
+        conditions = " ".join(conditions),
+        resolution = 8000,
+        output_prefix = f"{output_dir}/x_analysis/x_regulation"
+    resources:
+        mem_mb = 200000,
+        runtime = 480
+    threads: 16
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLTOOLS_ENV}
+        
+        mcool_files=({input.mcool_files})
+        
+        python scripts/x_chromosome_analysis.py \
+            --has_sites {input.has_sites} \
+            --mcool_files ${{mcool_files[@]}} \
+            --conditions {params.conditions} \
+            --interaction_file {input.interaction_file} \
+            --resolution {params.resolution} \
+            --output_prefix {params.output_prefix}
+        '''
+
+# # Wolbachia genome analysis - FIXED file paths
+# rule wolbachia_genome_analysis:
+#     input:
+#         mcool_files = [f"{data_dir}/JW18{inf}-1.matrix.mcool" for inf in infection]
+#     output:
+#         plot = f"{output_dir}/wolbachia_analysis/wolbachia_genome_analysis.pdf",
+#         compaction = f"{output_dir}/wolbachia_analysis/compaction_results.tsv",
+#         interactions = f"{output_dir}/wolbachia_analysis/host_interactions.tsv",
+#         comparisons = f"{output_dir}/wolbachia_analysis/strain_comparisons.tsv"
+#     params:
+#         strains = " ".join(infection),
+#         output_prefix = f"{output_dir}/wolbachia_analysis/wolbachia"
+#     resources:
+#         mem_mb = 150000,
+#         runtime = 360
+#     threads: 8
+#     shell:
+#         '''
+#         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+#         conda activate {COOLTOOLS_ENV}
+        
+#         mcool_files=({input.mcool_files})
+        
+#         python scripts/wolbachia_genome_analysis.py \
+#             --mcool_files ${{mcool_files[@]}} \
+#             --strains {params.strains} \
+#             --resolution 1000 \
+#             --output_prefix {params.output_prefix}
+#         '''
+
+# # Helper rules
+# rule prepare_genome_file:
+#     output:
+#         genome_file
+#     shell:
+#         '''
+#         echo -e "2L\t23513712\n2R\t25286936\n3L\t28110227\n3R\t32079331\n4\t1348131\nX\t23542271\nY\t3667352" > {output}
+#         '''
+
+rule index_vcf:
+    input:
+        vcf = sv_vcf
+    output:
+        index = sv_vcf + ".tbi"
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        if [ ! -f {input.vcf}.gz ]; then
+            bgzip -c {input.vcf} > {input.vcf}.gz
+        fi
+        tabix -p vcf {input.vcf}.gz
+        '''
+
+rule prepare_chip_peaks:
+    input:
+        chip_files = glob.glob(f"{chip_dir}/*.bed")
+    output:
+        touch(f"{chip_dir}/.prepared")
+    shell:
+        '''
+        for file in {input.chip_files}; do
+            if [[ ! -f "${{file}}.sorted" ]]; then
+                sort -k1,1 -k2,2n ${{file}} > ${{file}}.sorted
+                mv ${{file}}.sorted ${{file}}
+            fi
+        done
+        touch {output}
+        '''
+
+# # Summary report generation - UPDATED
+# rule generate_summary_report:
+#     input:
+#         # All major analysis outputs
+#         sv_filtered = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
+#         chromatin_structure = f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
+#         enrichment = f"{output_dir}/enrichment/architectural_strain_plots.pdf"
+#         enhancer = f"{output_dir}/enhancer_analysis/E-TSS_comparisons.tsv",
+#         x_analysis = f"{output_dir}/x_analysis/",
+#         # wolbachia = f"{output_dir}/wolbachia_analysis/strain_comparisons.tsv",
+#         diffhic_summary = f"{output_dir}/diffhic_results/summary/comprehensive_summary.txt"
+#     output:
+#         report = f"{output_dir}/comprehensive_analysis_report.html",
+#         summary = f"{output_dir}/analysis_summary.tsv"
+#     params:
+#         template = "scripts/report_template.html"
+#     shell:
+#         '''
+#         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+#         conda activate {PYTHON_ENV}
+        
+#         # Create summary table
+#         echo -e "Analysis\tDescription\tKey_Finding" > {output.summary}
+        
+#         # Add summary statistics from each analysis
+#         echo -e "DiffHic_Analysis\tMulti-resolution differential interactions\tSee {input.diffhic_summary}" >> {output.summary}
+#         echo -e "Structural_Variants\tFiltered interactions overlapping SVs\t$(grep -c "True" {input.sv_filtered} || echo 0) interactions removed" >> {output.summary}
+#         echo -e "TADs_Loops\tChromatin structure changes\tSee {input.chromatin_structure}" >> {output.summary}
+#         echo -e "Architectural_Proteins\tProtein enrichment at features\t$(tail -n +2 {input.enrichment} | wc -l) significant changes" >> {output.summary}
+#         echo -e "Enhancer_Classes\tEnhancer interaction patterns\t$(grep "significant" {input.enhancer} | wc -l || echo 0) significant changes" >> {output.summary}
+#         echo -e "X_Chromosome\tDosage compensation changes\tSee {input.x_analysis}" >> {output.summary}
+#         # echo -e "Wolbachia_Genomes\tStrain-specific organization\t$(tail -n +2 {input.wolbachia} | wc -l) strain comparisons" >> {output.summary}
+        
+#         # Generate HTML report if template exists
+#         if [ -f {params.template} ]; then
+#             python scripts/generate_report.py \
+#                 --sv_filtered {input.sv_filtered} \
+#                 --chromatin {input.chromatin_structure} \
+#                 --enrichment {input.enrichment} \
+#                 --enhancer {input.enhancer} \
+#                 --x_analysis {input.x_analysis} \
+#                 # --wolbachia {input.wolbachia} \
+#                 --diffhic_summary {input.diffhic_summary} \
+#                 --template {params.template} \
+#                 --output {output.report}
+#         else
+#             echo "<html><body><h1>Analysis Complete</h1><p>See individual output files for results.</p></body></html>" > {output.report}
+#         fi
+#         '''
+
+# Clean up rule
+rule clean:
+    shell:
+        '''
+        rm -rf {output_dir}/temp_*
+        rm -rf {output_dir}/*_temp_dir
+        find {output_dir} -name "*.log" -delete
+        '''
