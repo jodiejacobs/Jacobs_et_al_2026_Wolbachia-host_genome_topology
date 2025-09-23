@@ -17,3 +17,21 @@ dc_by_infection/.snakemake/
 *.bed
 */output/
 *_output/
+
+# Sequencing data files
+*.fastq*
+*.fq*
+*.bam
+*.sam
+*.cram
+
+# Analysis output directories
+**/output/
+**/svim_output/
+**/results/
+
+# Large data files
+*.vcf.gz
+*.bed.gz
+*.bigwig
+*.bw
