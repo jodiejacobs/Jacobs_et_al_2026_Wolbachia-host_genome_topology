@@ -9,3 +9,4 @@ dmelanogaster_sv/dmel-all-chromosome-r6.63.fasta.gz
 dmelanogaster_sv/svim/*
 dmelanogaster_sv/svim_output/*
 dc_by_infection/.snakemake/*
+dc_by_infection/.snakemake/
