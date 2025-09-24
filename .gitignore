@@ -35,3 +35,4 @@ dc_by_infection/.snakemake/
 *.bed.gz
 *.bigwig
 *.bw
+network_analysis/
