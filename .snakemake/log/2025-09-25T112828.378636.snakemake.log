@@ -1,0 +1,9 @@
+Assuming unrestricted shared filesystem usage.
+None
+host: emerald.prism
+Building DAG of jobs...
+MissingInputException in rule architectural_enrichment in file "/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/Snakefile", line 216:
+Missing input files for rule architectural_enrichment:
+    output: /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results/enrichment/strain_specific_strain_plots.pdf, /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results/enrichment/architectural_strain_plots.pdf
+    affected files:
+        /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results/diffhic_results/res_1000/null_model_results.csv

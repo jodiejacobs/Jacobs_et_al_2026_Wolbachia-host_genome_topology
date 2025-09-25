@@ -1,0 +1,28 @@
+None
+host: emerald.prism
+Building DAG of jobs...
+SLURM run ID: dea577be-38b1-44b6-aa36-f2256026b00b
+Using shell: /usr/bin/bash
+Provided remote nodes: 1
+Job stats:
+job                  count
+-----------------  -------
+identify_contacts        1
+total                    1
+
+Select jobs to execute...
+Execute 1 jobs...
+[Thu Sep 25 11:30:27 2025]
+rule identify_contacts:
+    input: /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/maps/JW18DOX-1.matrix.mcool, /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/maps/JW18DOX-2.matrix.mcool
+    output: /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results/contacts/JW18DOX_contacts.tsv
+    jobid: 0
+    reason: Missing output files: /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/structural_analysis_ms/results/contacts/JW18DOX_contacts.tsv
+    wildcards: sample=JW18DOX
+    threads: 16
+    resources: mem_mb=100000, mem_mib=95368, disk_mb=1000, disk_mib=954, tmpdir=<TBD>, slurm_partition=medium, runtime=200
+
+No SLURM account given, trying to guess.
+Unable to guess SLURM account. Trying to proceed without.
+Job 0 has been submitted with SLURM jobid 11658964 (log: /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/.snakemake/slurm_logs/rule_identify_contacts/JW18DOX/11658964.log).
+Terminating processes on user request, this might take some time.
