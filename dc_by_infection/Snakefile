@@ -118,7 +118,7 @@ rule diffhic_analysis_per_resolution:
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
         --threads={threads} \
-        --reference=DOX
+        --reference=DOX 
         '''
 
 rule combine_diffhic_results: # This needs to be updated to retain metadata from each resolution

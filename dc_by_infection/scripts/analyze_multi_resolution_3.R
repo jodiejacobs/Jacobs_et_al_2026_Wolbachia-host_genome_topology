@@ -230,51 +230,18 @@ read_all_data <- function(resolution, data_dir) {
         next
       }
       
-      # FIXED: Better condition extraction
-      condition <- "unknown"
-      if (grepl("wMel", sample_name, ignore.case = TRUE)) {
-        condition <- "JW18wMel"
-      } else if (grepl("wRi", sample_name, ignore.case = TRUE)) {
-        condition <- "JW18wRi"
-      } else if (grepl("wWil", sample_name, ignore.case = TRUE)) {
-        condition <- "JW18wWil"
-      } else if (grepl("DOX", sample_name, ignore.case = TRUE)) {
-        condition <- "JW18DOX"
-      } else {
-        # Try to extract condition from sample name pattern
-        condition <- sample_name
+      # Split data by existing condition and replicate columns
+      condition_rep_combos <- unique(data[, c("condition", "replicate")])
+      
+      for (i in 1:nrow(condition_rep_combos)) {
+        curr_condition <- condition_rep_combos$condition[i]
+        curr_replicate <- condition_rep_combos$replicate[i]
+        
+        subset_data <- data[data$condition == curr_condition & data$replicate == curr_replicate, ]
+        key <- paste0(curr_condition, "_rep", curr_replicate)
+        sample_data[[key]] <- as.data.frame(subset_data)
+        cat("  - Found", nrow(subset_data), "interactions for", key, "\n")
       }
-      
-      # Add condition column
-      data$condition <- condition
-      
-      # FIXED: Better replicate handling
-      replicate <- 1  # default
-      if (grepl("rep2|_r2|_2", sample_name, ignore.case = TRUE)) {
-        replicate <- 2
-      } else if (grepl("rep1|_r1|_1", sample_name, ignore.case = TRUE)) {
-        replicate <- 1
-      } else if ("sample" %in% colnames(data)) {
-        # Check if sample column contains replicate info
-        unique_samples <- unique(data$sample)
-        if (length(unique_samples) > 1) {
-          # Split by sample
-          for (i in seq_along(unique_samples)) {
-            subset_data <- data[data$sample == unique_samples[i], ]
-            key <- paste0(condition, "_rep", i)
-            sample_data[[key]] <- as.data.frame(subset_data)
-            cat("  - Found", nrow(subset_data), "interactions for", key, "\n")
-          }
-          next  # Skip the rest of this iteration
-        }
-      }
-      
-      data$replicate <- replicate
-      
-      # Store the processed data
-      key <- paste0(condition, "_rep", replicate)
-      sample_data[[key]] <- as.data.frame(data)
-      cat("  - Found", nrow(data), "interactions for", key, "\n")
       
     }, error = function(e) {
       warning("Error processing file ", filename, ": ", e$message)

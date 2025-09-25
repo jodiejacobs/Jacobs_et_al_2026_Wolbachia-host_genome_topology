@@ -346,6 +346,31 @@ if (nrow(summary_table) > 0) {
   cat("Saved: summary_plots.pdf\n")
 }
 
+# NULL MODEL
+# Combine null models from all resolutions
+null_model_files <- file.path(results_dir, paste0("res_", resolutions), "null_model_results.csv")
+existing_null_files <- null_model_files[file.exists(null_model_files)]
+
+if (length(existing_null_files) > 0) {
+  null_models <- list()
+  
+  for (file in existing_null_files) {
+    null_data <- read.csv(file, row.names = 1)
+    resolution <- unique(null_data$resolution)
+    null_models[[paste0("res_", resolution)]] <- null_data
+  }
+  
+  # Combine all null models
+  combined_null <- do.call(rbind, null_models)
+  
+  # Save combined null model
+  write.csv(combined_null, 
+            file.path(dirname(results_dir), "summary", "null_model_results.csv"),
+            row.names = TRUE)
+  
+  cat("Combined null model saved with", nrow(combined_null), "total interactions\n")
+}
+
 cat("\n=================================================================\n")
 cat("ANALYSIS COMPLETE!\n")
 cat("=================================================================\n")

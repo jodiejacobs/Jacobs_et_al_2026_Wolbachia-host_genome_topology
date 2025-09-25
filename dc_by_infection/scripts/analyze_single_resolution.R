@@ -640,6 +640,51 @@ dev.off()
 cat("Fitting GLM model with infection effects...\n")
 fit <- glmQLFit(y, design, BPPARAM=bpparam())
 
+# ADD THIS SECTION TO GENERATE NULL MODEL
+cat("Generating null model data...\n")
+
+# Extract fitted values (expected counts under the model)
+fitted_counts <- fit$fitted.values
+
+# Get the null model parameters
+null_model_data <- data.frame(
+  interaction_id = rownames(y),
+  
+  # Expected counts under null hypothesis for each sample
+  fitted_counts,
+  
+  # Dispersion estimates
+  common_dispersion = y$common.dispersion,
+  trended_dispersion = y$trended.dispersion,
+  tagwise_dispersion = y$tagwise.dispersion,
+  
+  # Library size and normalization factors
+  lib_sizes = paste(y$samples$lib.size, collapse = ";"),
+  norm_factors = paste(y$samples$norm.factors, collapse = ";"),
+  
+  # Average log2 CPM (baseline expression level)
+  avg_logCPM = aveLogCPM(y),
+  
+  # Add resolution info
+  resolution = resolution
+)
+
+# Add coordinate information
+if (!is.null(filtered_iset)) {
+  tryCatch({
+    annotations <- add_annotations(data.frame(row.names = rownames(y)), filtered_iset)
+    null_model_data <- cbind(null_model_data, annotations[, c("chr1", "start1", "end1", "chr2", "start2", "end2", "interaction_type")])
+  }, error = function(e) {
+    cat("Could not add coordinate annotations to null model\n")
+  })
+}
+
+# Save null model for this resolution
+write.csv(null_model_data, 
+          file.path(output_res_dir, "null_model_results.csv"), 
+          row.names = TRUE)
+
+cat("Saved null model with", nrow(null_model_data), "interactions\n")
 # Test for differential interactions - get coefficients other than intercept
 cat("Testing for differential interactions...\n")
 coef_names <- colnames(design)[-1]  # Skip intercept
