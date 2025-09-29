@@ -94,21 +94,22 @@ rule diffhic_analysis:
         # Combined tables (created by R script)
         combined_table = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         # Volcano plots directory marker
-        volcano_plots = directory(f"{output_dir}/diffhic_results/volcano_plots")
+        volcano_plots = directory(f"{output_dir}/diffhic_results/volcano_plots"),
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"
     params:
         contacts_dir = f"{output_dir}/contacts",
         output_dir = f"{output_dir}/diffhic_results",
         resolution = "1000,8000,32000,128000" 
     resources: 
-        mem_mb=2000000,
-        runtime=720
+        mem_mb=200000,
+        runtime=240
     threads: 128 
     shell:
         '''
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
         conda activate {R_DIFFHIC_ENV}
         
-        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution_3.R \
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution_4.R \
         --data_dir={params.contacts_dir} \
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
