@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# This is the one I used on 5/10/2024
+# As of 5/19/24 this script runs all the way with test dataset. 
 # Multi-Resolution diffHic Analysis for Differential Chromatin Interactions
 # 
 # This script performs differential analysis of chromatin interactions between
@@ -52,7 +52,7 @@ option_list <- list(
 
 # Parse command line arguments
 opt_parser <- OptionParser(option_list=option_list, 
-                          description="Multi-resolution differential Hi-C analysis")
+                          description="Multi-resolution differential Micro-C analysis")
 opt <- parse_args(opt_parser)
 
 # Set parameters from command line arguments
@@ -78,43 +78,51 @@ cat("  Output directory:", output_dir, "\n")
 cat("  Reference level:", reference_level, "\n")
 cat("  Threads:", threads, "\n")
 
+# Create output directories
+dir.create(output_dir, showWarnings = FALSE)
+for (res in resolutions) {
+  dir.create(file.path(output_dir, paste0("res_", res)), showWarnings = FALSE)
+}
+summary_dir <- file.path(output_dir, "summary")
+dir.create(summary_dir, showWarnings = FALSE)
+
 #=============================================================================
 # 2. Define Parameters
 #=============================================================================
 
-# Define all resolutions to process
-resolutions <- c(1000, 8000, 32000, 128000) 
-# resolutions <- c(128000)  #Test set
+# # Define all resolutions to process
+# resolutions <- c(1000, 8000, 32000, 128000) # This is hard coded, change this to the command line argument
+# # resolutions <- c(128000)  #Test set
 
-# Set filtering parameters
-min_count <- 10  # Minimum read count to keep an interaction
-min_samples <- 2  # Minimum number of samples with min_count
-fdr_threshold <- 0.01  # FDR threshold for significant interactions
+# # Set filtering parameters
+# min_count <- 10  # Minimum read count to keep an interaction # This is hard coded, change this to the command line argument
+# min_samples <- 2  # Minimum number of samples with min_count # This is hard coded, change this to the command line argument
+# fdr_threshold <- 0.01  # FDR threshold for significant interactions # This is hard coded, change this to the command line argument
 
-# Set output directory
-output_dir <- "diffhic_results"
-dir.create(output_dir, showWarnings = FALSE)
+# # Set output directory
+# output_dir <- "diffhic_results" # This is hard coded, change this to the command line argument
+# dir.create(output_dir, showWarnings = FALSE)
 
-# Create directory for each resolution
-for (res in resolutions) {
-  dir.create(file.path(output_dir, paste0("res_", res)), showWarnings = FALSE)
-}
+# # Create directory for each resolution
+# for (res in resolutions) {
+#   dir.create(file.path(output_dir, paste0("res_", res)), showWarnings = FALSE)
+# }
 
-# Create summary directory
-summary_dir <- file.path(output_dir, "summary")
-dir.create(summary_dir, showWarnings = FALSE)
+# # Create summary directory
+# summary_dir <- file.path(output_dir, "summary")
+# dir.create(summary_dir, showWarnings = FALSE)
 
 #=============================================================================
 # 3. Define Functions for Processing
 #=============================================================================
 
-# Create directories for output
-dir.create(output_dir, showWarnings = FALSE)
-for (res in resolutions) {
-  dir.create(file.path(output_dir, paste0("res_", res)), showWarnings = FALSE)
-}
-summary_dir <- file.path(output_dir, "summary")
-dir.create(summary_dir, showWarnings = FALSE)
+# # Create directories for output
+# dir.create(output_dir, showWarnings = FALSE)
+# for (res in resolutions) {
+#   dir.create(file.path(output_dir, paste0("res_", res)), showWarnings = FALSE)
+# }
+# summary_dir <- file.path(output_dir, "summary")
+# dir.create(summary_dir, showWarnings = FALSE)
 
 # Function to create a unique identifier for interactions
 create_interaction_id <- function(chr1, start1, end1, chr2, start2, end2) {
@@ -145,66 +153,166 @@ create_interaction_id <- function(chr1, start1, end1, chr2, start2, end2) {
   
   return(result)
 }
-# Function to read all_cis and all_trans data and split by condition and replicate
-read_all_data <- function(resolution) {
-  res_dir <- file.path(data_dir, paste0("res_", resolution))
-  
-  all_cis_file <- file.path(res_dir, paste0("all_cis_contacts_", resolution, "bp.tsv"))
-  all_trans_file <- file.path(res_dir, paste0("all_trans_contacts_", resolution, "bp.tsv"))
-  
-  # Check if files exist
-  if (!file.exists(all_cis_file) || !file.exists(all_trans_file)) {
-    stop(paste("All contacts files not found for resolution", resolution))
-  }
-  
-  # Read the data
-  cat("Reading all contacts files for resolution", resolution, "bp\n")
-  custom_header <- c("chrom1", "start1", "end1", "chrom2", "start2", "end2", "count", "replicate", "condition","NA")
-  cis_data <- fread(all_cis_file, header = TRUE, col.names = custom_header, fill = TRUE)
-  trans_data <- fread(all_trans_file, header = TRUE, col.names = custom_header, fill = TRUE)
 
-  # Define columns to convert
-  cols_to_convert <- c("start1", "end1", "start2", "end2", "count")
-  # Convert columns in cis_data
-  cis_data[, (cols_to_convert) := lapply(.SD, function(x) as.numeric(gsub(",", "", x))), .SDcols = cols_to_convert]
-  # Convert columns in trans_data
-  trans_data[, (cols_to_convert) := lapply(.SD, function(x) as.numeric(gsub(",", "", x))), .SDcols = cols_to_convert]
+# Function to read data from the Snakemake pipeline output with flexible sample handling
+read_all_data <- function(resolution, data_dir) {
+  # List all contact files in the data directory
+  contact_files <- list.files(data_dir, pattern = "_contacts\\.tsv$", full.names = TRUE)
   
-  # Make sure required columns exist
-  required_cols <- c("chrom1", "start1", "end1", "chrom2", "start2", "end2", "count", "replicate", "condition")
-  missing_cis <- setdiff(required_cols, colnames(cis_data))
-  missing_trans <- setdiff(required_cols, colnames(trans_data))
+  cat("Found contact files:", paste(basename(contact_files), collapse=", "), "\n")
   
-  if (length(missing_cis) > 0 || length(missing_trans) > 0) {
-    stop(paste("Missing required columns:", 
-               paste(c(missing_cis, missing_trans), collapse=", ")))
+  # Initialize a list to store data for each sample and replicate
+  sample_data <- list()
+  
+  # Process each file
+  for (file in contact_files) {
+    cat("Processing file:", basename(file), "for resolution", resolution, "bp\n")
+    
+    # Extract sample name from filename (adjust this pattern as needed)
+    filename <- basename(file)
+    sample_name <- gsub("_contacts\\.tsv$", "", filename)
+    
+    # Read the data
+    data <- fread(file, header = TRUE)
+    
+    # Check if the resolution column exists
+    if (!"resolution" %in% colnames(data)) {
+      # If resolution not in columns, check if the file is already filtered by resolution
+      # or try to infer resolution from filename patterns
+      if (grepl(paste0("_", resolution, "bp"), filename)) {
+        # File is already filtered for this resolution
+        resolution_data <- data
+        resolution_data <- resolution_data[resolution_data$count >= min_count, ]
+      } else {
+        warning("Resolution column not found in ", filename, 
+                " and cannot infer resolution from filename. Assuming all data is for requested resolution.")
+        resolution_data <- data
+        resolution_data <- resolution_data[resolution_data$count >= min_count, ]
+
+      }
+    } else {
+      # Filter for the specified resolution3.
+      resolution_data <- data[data$resolution == resolution, ]
+      resolution_data <- resolution_data[resolution_data$count >= min_count, ]
+
+    }
+    
+    if (nrow(resolution_data) == 0) {
+      warning("No data found for resolution ", resolution, " in file ", filename)
+      next
+    }
+    
+    # Ensure the data has all required columns
+    required_cols <- c("chrom1", "start1", "end1", "chrom2", "start2", "end2", "count")
+    missing_cols <- setdiff(required_cols, colnames(resolution_data))
+    if (length(missing_cols) > 0) {
+      stop("Missing columns in data file: ", paste(missing_cols, collapse=", "))
+    }
+    
+    # Convert columns to numeric if they're not already
+    cols_to_convert <- c("start1", "end1", "start2", "end2", "count")
+    resolution_data[, (cols_to_convert) := lapply(.SD, function(x) {
+      if (is.character(x)) as.numeric(gsub(",", "", x)) else x
+    }), .SDcols = cols_to_convert]
+    
+    # Extract condition from sample name
+    # Pattern for JW18-wMel_contacts.tsv, JW18-DOX_contacts.tsv, etc.
+    condition <- NA
+    if (grepl("JW18-wMel", sample_name)) {
+      condition <- "wMel"
+    } else if (grepl("JW18-wRi", sample_name)) {
+      condition <- "wRi"
+    } else if (grepl("JW18-wWil", sample_name)) {
+      condition <- "wWil"
+    } else if (grepl("JW18-DOX", sample_name)) {
+      condition <- "DOX"
+    } else {
+      # Default to using the filename if we can't match
+      condition <- sample_name
+    }
+    
+    # Add condition column if it doesn't exist
+    if (!"condition" %in% colnames(resolution_data)) {
+      resolution_data$condition <- condition
+    }
+    
+    # Add replicate column if it doesn't exist
+    if (!"replicate" %in% colnames(resolution_data)) {
+      # Check if each row already has a replicate column we can use
+      # This is relevant if data has one row per replicate
+      
+      # If not, check the filename for replicate info
+      if (grepl("_rep1", sample_name, ignore.case = TRUE) || grepl("_r1", sample_name, ignore.case = TRUE)) {
+        resolution_data$replicate <- 1
+      } else if (grepl("_rep2", sample_name, ignore.case = TRUE) || grepl("_r2", sample_name, ignore.case = TRUE)) {
+        resolution_data$replicate <- 2
+      } else {
+        # If replicate information is not in the filename,
+        # check if there's a column that might contain it
+        possible_rep_cols <- grep("rep|replicate|batch", colnames(resolution_data), ignore.case = TRUE, value = TRUE)
+        
+        if (length(possible_rep_cols) > 0) {
+          cat("  - Found possible replicate column:", possible_rep_cols[1], "\n")
+          resolution_data$replicate <- resolution_data[[possible_rep_cols[1]]]
+        } else {
+          # As a last resort, check if we can parse replicate from another pattern
+          # Assuming we need to split the samples by replicate
+          if (nrow(resolution_data) > 0) {
+            # Try to figure out which values might be replicates
+            unique_values <- unique(resolution_data$sample)
+            if (length(unique_values) <= 2) {
+              cat("  - Found possible replicate values in 'sample' column:", 
+                 paste(unique_values, collapse=", "), "\n")
+              # Map these values to replicates 1 and 2
+              rep_map <- setNames(1:length(unique_values), unique_values)
+              resolution_data$replicate <- rep_map[resolution_data$sample]
+            } else {
+              # Default to replicate 1 if we can't determine
+              warning("Could not determine replicate information. Splitting by sample column.")
+              sample_groups <- split(resolution_data, resolution_data$sample)
+              
+              # Process each sample group separately
+              for (i in seq_along(sample_groups)) {
+                sg <- sample_groups[[i]]
+                sg$replicate <- i
+                
+                # Add to sample_data
+                key <- paste0(condition, "_rep", i)
+                sample_data[[key]] <- as.data.frame(sg)
+                cat("  - Found", nrow(sg), "interactions for", key, "\n")
+              }
+              
+              # Skip the rest of the loop since we've already added to sample_data
+              next
+            }
+          } else {
+            # Default to replicate 1
+            resolution_data$replicate <- 1
+            warning("Could not determine replicate. Defaulting to replicate 1.")
+          }
+        }
+      }
+    }
+    
+    # Split data by replicate
+    for (rep in unique(resolution_data$replicate)) {
+      subset_data <- as.data.frame(resolution_data[resolution_data$replicate == rep, ])
+      
+      if (nrow(subset_data) > 0) {
+        key <- paste0(condition, "_rep", rep)
+        if (is.null(sample_data[[key]])) {
+          sample_data[[key]] <- subset_data
+        } else {
+          sample_data[[key]] <- rbind(sample_data[[key]], subset_data)
+        }
+        
+        cat("  - Found", nrow(subset_data), "interactions for", key, "\n")
+      }
+    }
   }
   
-  # Combine the data
-  all_data <- rbindlist(list(cis_data, trans_data), use.names = TRUE, fill = TRUE)
-  
-  # Split by condition and replicate
-  cat("Splitting data by condition and replicate\n")
-  
-  # Filter and convert to data.frame
-  wmel_rep1 <- as.data.frame(all_data[condition == "JW18-wMel" & replicate == 1])
-  wmel_rep2 <- as.data.frame(all_data[condition == "JW18-wMel" & replicate == 2])
-  dox_rep1  <- as.data.frame(all_data[condition == "JW18-DOX" & replicate == 1])
-  dox_rep2  <- as.data.frame(all_data[condition == "JW18-DOX" & replicate == 2])
-  
-  # Report counts
-  cat("Found", nrow(wmel_rep1), "interactions for wMel replicate 1\n")
-  cat("Found", nrow(wmel_rep2), "interactions for wMel replicate 2\n")
-  cat("Found", nrow(dox_rep1), "interactions for DOX replicate 1\n")
-  cat("Found", nrow(dox_rep2), "interactions for DOX replicate 2\n")
-  
-  # Return the data by condition and replicate
-  return(list(
-    wmel_rep1 = wmel_rep1,
-    wmel_rep2 = wmel_rep2,
-    dox_rep1 = dox_rep1,
-    dox_rep2 = dox_rep2
-  ))
+  # Return all sample data
+  return(sample_data)
 }
 
 # Function to create GenomicInteractions object
@@ -411,9 +519,7 @@ convertToGInteractions <- function(gi) {
 }
 
 # Modified function to process a single resolution with DESeq2-like design
-# Modified function to process a single resolution with DESeq2-like design
 process_resolution <- function(resolution) {
-  res_dir <- file.path(data_dir, paste0("res_", resolution))
   output_res_dir <- file.path(output_dir, paste0("res_", resolution))
   
   cat("\n=======================================================\n")
@@ -421,9 +527,15 @@ process_resolution <- function(resolution) {
   cat("=======================================================\n")
   
   # Load data from the combined files
-  all_data_list <- read_all_data(resolution)
-
-  # Convert columns to numeric
+  all_data_list <- read_all_data(resolution, data_dir)
+  
+  # Check if we have any data
+  if (length(all_data_list) == 0) {
+    warning("No data found for resolution ", resolution, "bp")
+    return(NULL)
+  }
+  
+  # Convert columns to numeric if not already
   cols_to_numeric <- c("start1", "end1", "start2", "end2", "count")
   
   # Process each dataset separately
@@ -437,51 +549,45 @@ process_resolution <- function(resolution) {
     all_data_list[[dataset_name]][, (cols_to_numeric) := lapply(.SD, as.numeric), 
                                   .SDcols = cols_to_numeric]
   }
- 
-  # Create GenomicInteractions objects
-  wmel_rep1_gi <- create_gi(all_data_list$wmel_rep1)
-  wmel_rep2_gi <- create_gi(all_data_list$wmel_rep2)
-  dox_rep1_gi <- create_gi(all_data_list$dox_rep1)
-  dox_rep2_gi <- create_gi(all_data_list$dox_rep2)
   
-  # Convert GenomicInteractions to GInteractions
-  wmel_rep1_gint <- convertToGInteractions(wmel_rep1_gi)
-  wmel_rep2_gint <- convertToGInteractions(wmel_rep2_gi)
-  dox_rep1_gint <- convertToGInteractions(dox_rep1_gi)
-  dox_rep2_gint <- convertToGInteractions(dox_rep2_gi)
+  # Create GInteractions objects for each sample
+  gi_list <- list()
+  iset_list <- list()
   
-  # Extract counts
-  wmel_rep1_counts <- mcols(wmel_rep1_gi)$counts
-  wmel_rep2_counts <- mcols(wmel_rep2_gi)$counts
-  dox_rep1_counts <- mcols(dox_rep1_gi)$counts
-  dox_rep2_counts <- mcols(dox_rep2_gi)$counts
-  
-  # Create InteractionSet objects
-  wmel_rep1_iset <- InteractionSet(list(counts=matrix(wmel_rep1_counts, ncol=1)), 
-                                  wmel_rep1_gint)
-  wmel_rep2_iset <- InteractionSet(list(counts=matrix(wmel_rep2_counts, ncol=1)), 
-                                  wmel_rep2_gint)
-  dox_rep1_iset <- InteractionSet(list(counts=matrix(dox_rep1_counts, ncol=1)), 
-                                dox_rep1_gint)
-  dox_rep2_iset <- InteractionSet(list(counts=matrix(dox_rep2_counts, ncol=1)), 
-                                dox_rep2_gint)
-  
-  # List of all InteractionSet objects
-  all_isets <- list(
-    wmel_rep1 = wmel_rep1_iset,
-    wmel_rep2 = wmel_rep2_iset,
-    dox_rep1 = dox_rep1_iset,
-    dox_rep2 = dox_rep2_iset
-  )
+  for (sample_name in names(all_data_list)) {
+    data <- all_data_list[[sample_name]]
+    if (nrow(data) > 0) {
+      # Create GRanges for anchors
+      anchor1 <- GRanges(
+        seqnames = data$chrom1,
+        ranges = IRanges(start = data$start1, end = data$end1)
+      )
+      
+      anchor2 <- GRanges(
+        seqnames = data$chrom2,
+        ranges = IRanges(start = data$start2, end = data$end2)
+      )
+      
+      # Create GInteractions object
+      gint <- GInteractions(anchor1, anchor2)
+      gi_list[[sample_name]] <- gint
+      
+      # Create InteractionSet object
+      iset_list[[sample_name]] <- InteractionSet(list(counts=matrix(data$count, ncol=1)), gint)
+    }
+  }
   
   # Create unified InteractionSet with all samples
-  combined_iset <- find_all_interactions(all_isets)
-
+  cat("Creating combined interaction set...\n")
+  combined_iset <- find_all_interactions(iset_list)
+  
+  # Calculate library sizes
   lib_sizes <- colSums(assay(combined_iset))
   combined_iset$totals <- lib_sizes
   
   # Check the dimensions of the combined object
-  cat("Combined interaction set has", nrow(combined_iset), "interactions across 4 samples\n")
+  cat("Combined interaction set has", nrow(combined_iset), "interactions across", 
+      ncol(assay(combined_iset)), "samples\n")
   
   # Filter out low-abundance interactions
   cat("Filtering low-abundance interactions...\n")
@@ -495,20 +601,28 @@ process_resolution <- function(resolution) {
   cat("Creating DGEList object for analysis...\n")
   y <- asDGEList(filtered_iset)
   
-  # DESeq2-like experimental design setup
-  cat("Setting up DESeq2-like experimental design...\n")
-  
-  # Define the infection factor - make sure reference is first level
+  # Extract sample information from column names
   samples <- colnames(y)
-  # Extract condition from sample names (assumes format like wmel_rep1, dox_rep1)
+  
+  # Parse condition and replicate from sample names (assumes format like condition_rep#)
   conditions <- sapply(strsplit(samples, "_rep"), function(x) x[1])
   replicates <- sapply(strsplit(samples, "_rep"), function(x) x[2])
   
-  # Create infection factor
-  infection <- factor(conditions, levels=c(reference_level, setdiff(unique(conditions), reference_level)))
+  # Create condition factor - ensure reference level is first
+  all_conditions <- unique(conditions)
+  if (reference_level %in% all_conditions) {
+    # Put reference level first
+    condition_levels <- c(reference_level, setdiff(all_conditions, reference_level))
+  } else {
+    # Reference level not found, use alphabetical order
+    warning("Reference level ", reference_level, " not found in data. Using alphabetical order for conditions.")
+    condition_levels <- sort(all_conditions)
+  }
+  
+  infection <- factor(conditions, levels=condition_levels)
   replicate <- factor(replicates)
   
-  # Create a sample table (like colData in DESeq2)
+  # Create a sample table
   sample_table <- data.frame(
     sample = samples,
     infection = infection,
@@ -517,7 +631,7 @@ process_resolution <- function(resolution) {
   rownames(sample_table) <- samples
   print(sample_table)
   
-  # Define model matrix with infection as the only factor (~infection in DESeq2)
+  # Define model matrix with infection as the only factor
   cat("Creating model matrix for infection effect...\n")
   design <- model.matrix(~infection, data=sample_table)
   print(design)
@@ -533,8 +647,8 @@ process_resolution <- function(resolution) {
   pdf(file.path(output_res_dir, "sample_pca_plot.pdf"), width=8, height=6)
   pca <- prcomp(t(logcounts))
   pca_data <- data.frame(PC1=pca$x[,1], PC2=pca$x[,2], 
-                        Sample=colnames(logcounts),
-                        Group=conditions)
+                         Sample=colnames(logcounts),
+                         Group=conditions)
   plot(pca_data$PC1, pca_data$PC2, main=paste0("PCA of Samples (", resolution, "bp)"), 
        xlab=paste0("PC1 (", round(summary(pca)$importance[2,1]*100, 1), "%)"),
        ylab=paste0("PC2 (", round(summary(pca)$importance[2,2]*100, 1), "%)"),
@@ -574,31 +688,32 @@ process_resolution <- function(resolution) {
   for (i in seq_along(coef_names)) {
     coef_name <- coef_names[i]
     cat("Testing coefficient:", coef_name, "\n")
-    qlf_list[[coef_name]] <- glmQLFTest(fit, coef=i+1, BPPARAM=bpparam())
+    qlf_list[[coef_name]] <- glmQLFTest(fit, coef=i+1)  # Remove BPPARAM parameter
   }
-  
+    
   # Create the null model (intercept only)
   cat("Creating and testing null model...\n")
   null_design <- model.matrix(~1, data=sample_table)
-  null_fit <- glmQLFit(y, null_design, BPPARAM=bpparam())
-  
-  # Test the null model
-  null_qlf <- glmQLFTest(null_fit, BPPARAM=bpparam())
-  
+  null_fit <- glmFit(y, null_design)  # Use glmFit instead of glmQLFit
+
+  # For null model, use deviance directly
+  null_dev <- sum(null_fit$deviance)
+  cat("Null model deviance:", null_dev, "\n")
+
   # Perform model comparison
   cat("Performing model comparison (full vs null)...\n")
-  
+
   # Calculate AIC and BIC for both models
   full_model_aic <- -2 * sum(fit$loglik) + 2 * fit$df.prior
-  null_model_aic <- -2 * sum(null_fit$loglik) + 2 * null_fit$df.prior
+  null_model_aic <- -2 * sum(null_fit$loglik) + 2  # Adjust for null model 
   full_model_bic <- -2 * sum(fit$loglik) + log(ncol(y)) * fit$df.prior
-  null_model_bic <- -2 * sum(null_fit$loglik) + log(ncol(y)) * null_fit$df.prior
-  
-  # LRT test
-  lr_stat <- 2 * (sum(fit$loglik) - sum(null_fit$loglik))
+  null_model_bic <- -2 * sum(null_fit$loglik) + log(ncol(y))  # Adjust for null model
+
+  # LRT test (using deviance difference)
+  lr_stat <- sum(null_fit$deviance) - sum(fit$deviance)
   lr_df <- ncol(design) - 1
   lr_pval <- 1 - pchisq(lr_stat, lr_df)
-  
+
   # Create a model comparison data frame
   model_comparison <- data.frame(
     Model = c("Full Model (~infection)", "Null Model (Intercept only)"),
@@ -610,173 +725,192 @@ process_resolution <- function(resolution) {
     LRT_df = c(lr_df, NA),
     LRT_pvalue = c(lr_pval, NA)
   )
-  
+
   # Save model comparison
   write.csv(model_comparison, file.path(output_res_dir, "model_comparison.csv"), row.names=FALSE)
-  
-  # Get the top differential interactions from both models
-  cat("Extracting results from both models...\n")
+
+  # Create null results object (used for topTags in the original code)
+  null_results <- list(
+    table = data.frame(
+      logFC = rep(0, nrow(y)),
+      logCPM = aveLogCPM(y),
+      PValue = rep(1, nrow(y)),
+      FDR = rep(1, nrow(y)),
+      row.names = rownames(y)
+    )
+  )
+
+  # Write null results to file
+  write.csv(null_results$table, file.path(output_res_dir, "null_model_results.csv"), row.names=TRUE)
+
+  # Get the top differential interactions from each comparison
+  cat("Extracting results from coefficients...\n")
   top_hits_list <- list()
   for (coef_name in names(qlf_list)) {
     top_hits_list[[coef_name]] <- topTags(qlf_list[[coef_name]], n=Inf)
+    
+    # Write the results to file
+    write.csv(top_hits_list[[coef_name]]$table, 
+              file.path(output_res_dir, paste0("differential_interactions_", coef_name, ".csv")), 
+              row.names=TRUE)
+    
+    # Also write a filtered version with only significant hits
+    sig_hits <- top_hits_list[[coef_name]]$table[top_hits_list[[coef_name]]$table$FDR < fdr_threshold, ]
+    if (nrow(sig_hits) > 0) {
+      write.csv(sig_hits, 
+                file.path(output_res_dir, paste0("significant_interactions_", coef_name, ".csv")), 
+                row.names=TRUE)
+    }
   }
-  null_results <- topTags(null_qlf, n=Inf)
   
   # Save null model results
-  write.csv(null_results, file.path(output_res_dir, "null_model_results.csv"), row.names=TRUE)
+  # null_results <- topTags(null_qlf, n=Inf)
+  write.csv(null_results$table, file.path(output_res_dir, "null_model_results.csv"), row.names=TRUE)
   
-  # Main results focus on the primary comparison (typically wMel vs reference)
-  qlf <- qlf_list[[coef_names[1]]]  # Use the first non-intercept coefficient
-  top_hits <- top_hits_list[[coef_names[1]]]
-  
-  # Filter by FDR
-  significant <- top_hits$table[top_hits$table$FDR < fdr_threshold,]
-  cat("Found", nrow(significant), "significant differential interactions at FDR <", fdr_threshold, "\n")
-  
-  # Visualize the results
-  cat("Creating visualization plots...\n")
-  pdf(file.path(output_res_dir, "differential_interactions_plots.pdf"), width=10, height=8)
-  
-  # MA plot
-  plotMD(qlf)
-  abline(h=c(-1, 0, 1), col=c("blue", "red", "blue"), lty=c(2,1,2))
-  title(paste0("MA plot of differential interactions (", resolution, "bp)"))
-  
-  # Volcano plot
-  plot(top_hits$table$logFC, -log10(top_hits$table$PValue), 
-       pch=20, col=ifelse(top_hits$table$FDR < fdr_threshold, "red", "black"),
-       xlab="log2 Fold Change", ylab="-log10(P-value)",
-       main=paste0("Volcano plot of differential interactions (", resolution, "bp)"))
-  abline(v=c(-1, 1), h=-log10(0.05), lty=2, col="blue")
-  
-  dev.off()
-  
-  # Save results to file
-  cat("Saving differential interaction results...\n")
-  write.csv(top_hits, file.path(output_res_dir, "differential_interactions.csv"), row.names=TRUE)
-  
-  # Add annotations to results
-  cat("Adding annotations to results...\n")
-  annotated_results <- add_annotations(top_hits$table, filtered_iset)
-  write.csv(annotated_results, file.path(output_res_dir, "annotated_differential_interactions.csv"), row.names=TRUE)
-  
-  # Summarize differential interactions by type
-  cat("Summarizing differential interactions...\n")
-  sig_results <- annotated_results[annotated_results$FDR < fdr_threshold,]
-  
-  # Count by interaction type
-  type_summary <- table(sig_results$interaction_type)
-  cat("\nSummary by interaction type:\n")
-  print(type_summary)
-  
-  # Create a summary file
-  sink(file.path(output_res_dir, "results_summary.txt"))
-  cat("DIFFERENTIAL INTERACTION ANALYSIS SUMMARY\n")
-  cat("=========================================\n")
-  cat("Resolution:", resolution, "bp\n")
-  cat("Total interactions analyzed:", nrow(filtered_iset), "\n")
-  cat("Significant differential interactions (FDR <", fdr_threshold, "):", nrow(sig_results), "\n\n")
-  
-  cat("Summary by interaction type:\n")
-  print(type_summary)
-  cat("\n")
-  
-  # For cis interactions, summarize by chromosome
-  if(sum(sig_results$interaction_type == "cis") > 0) {
-    cis_summary <- table(sig_results$chr1[sig_results$interaction_type == "cis"])
-    cat("Summary of cis interactions by chromosome:\n")
-    print(cis_summary)
-    cat("\n")
+  # Generate visualizations for each comparison
+  for (coef_name in names(qlf_list)) {
+    # Get the topTags results for this coefficient
+    qlf <- qlf_list[[coef_name]]
+    top_hits <- top_hits_list[[coef_name]]
     
-    # Summarize by distance
-    if (any(!is.na(sig_results$interaction_distance[sig_results$interaction_type == "cis"]))) {
-      dist_breaks <- c(0, 10000, 50000, 100000, 500000, 1000000, Inf)
-      dist_labels <- c("<10kb", "10-50kb", "50-100kb", "100-500kb", "500kb-1Mb", ">1Mb")
-      distance_summary <- table(cut(sig_results$interaction_distance[sig_results$interaction_type == "cis"], 
-                                   breaks=dist_breaks, labels=dist_labels))
-      cat("Summary of cis interactions by distance:\n")
-      print(distance_summary)
+    # Filter by FDR
+    significant <- top_hits$table[top_hits$table$FDR < fdr_threshold,]
+    cat("Found", nrow(significant), "significant differential interactions for", 
+        coef_name, "at FDR <", fdr_threshold, "\n")
+    
+    # Visualize the results
+    pdf_file <- file.path(output_res_dir, paste0("differential_interactions_", coef_name, "_plots.pdf"))
+    pdf(pdf_file, width=10, height=8)
+    
+    # MA plot
+    plotMD(qlf)
+    abline(h=c(-1, 0, 1), col=c("blue", "red", "blue"), lty=c(2,1,2))
+    title(paste0("MA plot for ", coef_name, " (", resolution, "bp)"))
+    
+    # Volcano plot
+    plot(top_hits$table$logFC, -log10(top_hits$table$PValue), 
+         pch=20, col=ifelse(top_hits$table$FDR < fdr_threshold, "red", "black"),
+         xlab="log2 Fold Change", ylab="-log10(P-value)",
+         main=paste0("Volcano plot for ", coef_name, " (", resolution, "bp)"))
+    abline(v=c(-1, 1), h=-log10(0.05), lty=2, col="blue")
+    
+    dev.off()
+    
+    # Add annotations to results
+    cat("Adding annotations to results for", coef_name, "...\n")
+    annotated_results <- add_annotations(top_hits$table, filtered_iset)
+    annotated_file <- file.path(output_res_dir, paste0("annotated_differential_interactions_", coef_name, ".csv"))
+    write.csv(annotated_results, annotated_file, row.names=TRUE)
+    
+    # Summarize differential interactions by type
+    sig_results <- annotated_results[annotated_results$FDR < fdr_threshold,]
+    
+    if (nrow(sig_results) > 0) {
+      # Count by interaction type
+      type_summary <- table(sig_results$interaction_type)
+      cat("\nSummary by interaction type for", coef_name, ":\n")
+      print(type_summary)
+      
+      # Create a summary file
+      summary_file <- file.path(output_res_dir, paste0("results_summary_", coef_name, ".txt"))
+      sink(summary_file)
+      cat("DIFFERENTIAL INTERACTION ANALYSIS SUMMARY FOR", coef_name, "\n")
+      cat("=========================================\n")
+      cat("Resolution:", resolution, "bp\n")
+      cat("Total interactions analyzed:", nrow(filtered_iset), "\n")
+      cat("Significant differential interactions (FDR <", fdr_threshold, "):", nrow(sig_results), "\n\n")
+      
+      cat("Summary by interaction type:\n")
+      print(type_summary)
       cat("\n")
+      
+      # For cis interactions, summarize by chromosome
+      if(sum(sig_results$interaction_type == "cis") > 0) {
+        cis_summary <- table(sig_results$chr1[sig_results$interaction_type == "cis"])
+        cat("Summary of cis interactions by chromosome:\n")
+        print(cis_summary)
+        cat("\n")
+        
+        # Summarize by distance
+        if (any(!is.na(sig_results$interaction_distance[sig_results$interaction_type == "cis"]))) {
+          dist_breaks <- c(0, 10000, 50000, 100000, 500000, 1000000, Inf)
+          dist_labels <- c("<10kb", "10-50kb", "50-100kb", "100-500kb", "500kb-1Mb", ">1Mb")
+          distance_summary <- table(cut(sig_results$interaction_distance[sig_results$interaction_type == "cis"], 
+                                       breaks=dist_breaks, labels=dist_labels))
+          cat("Summary of cis interactions by distance:\n")
+          print(distance_summary)
+          cat("\n")
+        }
+      }
+      
+      # For trans interactions, summarize by chromosome pairs
+      if(sum(sig_results$interaction_type == "trans") > 0) {
+        trans_pairs <- paste(sig_results$chr1, sig_results$chr2, sep="-")[sig_results$interaction_type == "trans"]
+        trans_summary <- sort(table(trans_pairs), decreasing=TRUE)
+        cat("Summary of trans interactions by chromosome pairs:\n")
+        print(trans_summary)
+      }
+      
+      sink()
+      
+      # Create supplementary files for significant interactions
+      cat("Creating supplementary files for significant interactions for", coef_name, "...\n")
+      
+      # Extract significant cis and trans interactions
+      sig_cis <- sig_results[sig_results$interaction_type == "cis", ]
+      sig_trans <- sig_results[sig_results$interaction_type == "trans", ]
+      
+      # Save to separate files
+      if (nrow(sig_cis) > 0) {
+        write.csv(sig_cis, file.path(output_res_dir, paste0("significant_cis_interactions_", coef_name, ".csv")), 
+                  row.names=TRUE)
+      }
+      
+      if (nrow(sig_trans) > 0) {
+        write.csv(sig_trans, file.path(output_res_dir, paste0("significant_trans_interactions_", coef_name, ".csv")), 
+                  row.names=TRUE)
+      }
+      
+      # Create a BED file for visualization in genome browsers
+      bed_file <- file.path(output_res_dir, paste0("significant_interactions_", coef_name, ".bedpe"))
+      write.table(
+        data.frame(
+          chr1 = sig_results$chr1,
+          start1 = sig_results$start1,
+          end1 = sig_results$end1,
+          chr2 = sig_results$chr2,
+          start2 = sig_results$start2,
+          end2 = sig_results$end2,
+          name = paste0("DI_", 1:nrow(sig_results)),
+          score = -log10(sig_results$FDR),
+          strand1 = ".",
+          strand2 = ".",
+          type = sig_results$interaction_type,
+          logFC = sig_results$logFC
+        ),
+        bed_file, quote=FALSE, sep="\t", row.names=FALSE, col.names=FALSE
+      )
     }
-  }
-  
-  # For trans interactions, summarize by chromosome pairs
-  if(sum(sig_results$interaction_type == "trans") > 0) {
-    trans_pairs <- paste(sig_results$chr1, sig_results$chr2, sep="-")[sig_results$interaction_type == "trans"]
-    trans_summary <- sort(table(trans_pairs), decreasing=TRUE)
-    cat("Summary of trans interactions by chromosome pairs:\n")
-    print(trans_summary)
-  }
-  
-  # Add model comparison information
-  cat("\nModel Comparison:\n")
-  cat("Full model (~infection) log-likelihood:", model_comparison$LogLikelihood[1], "\n")
-  cat("Null model (intercept) log-likelihood:", model_comparison$LogLikelihood[2], "\n")
-  cat("Likelihood ratio test statistic:", model_comparison$LRT_statistic[1], "\n")
-  cat("Degrees of freedom:", model_comparison$LRT_df[1], "\n")
-  cat("P-value:", model_comparison$LRT_pvalue[1], "\n")
-  cat("AIC - Full model:", model_comparison$AIC[1], "Null model:", model_comparison$AIC[2], "\n")
-  cat("BIC - Full model:", model_comparison$BIC[1], "Null model:", model_comparison$BIC[2], "\n")
-  
-  if (model_comparison$LRT_pvalue[1] < 0.05) {
-    cat("\nThe infection effect is statistically significant (p < 0.05)\n")
-  } else {
-    cat("\nThe infection effect is NOT statistically significant (p >= 0.05)\n")
-  }
-  
-  sink()
-  
-  # Create supplementary files for significant interactions
-  cat("Creating supplementary files for significant interactions...\n")
-  
-  # Extract significant cis and trans interactions
-  if (nrow(sig_results) > 0) {
-    sig_cis <- sig_results[sig_results$interaction_type == "cis", ]
-    sig_trans <- sig_results[sig_results$interaction_type == "trans", ]
-    
-    # Save to separate files
-    if (nrow(sig_cis) > 0) {
-      write.csv(sig_cis, file.path(output_res_dir, "significant_cis_interactions.csv"), row.names=TRUE)
-    }
-    
-    if (nrow(sig_trans) > 0) {
-      write.csv(sig_trans, file.path(output_res_dir, "significant_trans_interactions.csv"), row.names=TRUE)
-    }
-    
-    # Create a BED file for visualization in genome browsers
-    bed_file <- file.path(output_res_dir, "significant_interactions.bedpe")
-    write.table(
-      data.frame(
-        chr1 = sig_results$chr1,
-        start1 = sig_results$start1,
-        end1 = sig_results$end1,
-        chr2 = sig_results$chr2,
-        start2 = sig_results$start2,
-        end2 = sig_results$end2,
-        name = paste0("DI_", 1:nrow(sig_results)),
-        score = -log10(sig_results$FDR),
-        strand1 = ".",
-        strand2 = ".",
-        type = sig_results$interaction_type,
-        logFC = sig_results$logFC
-      ),
-      bed_file, quote=FALSE, sep="\t", row.names=FALSE, col.names=FALSE
-    )
   }
   
   # Create a results object to return
   result <- list(
     resolution = resolution,
-    significant = sig_results,
-    all_interactions = annotated_results,
+    significant = if (length(top_hits_list) > 0) {
+      # Get the first coefficient's significant results
+      top_hits_list[[1]]$table[top_hits_list[[1]]$table$FDR < fdr_threshold, ]
+    } else NULL,
+    all_interactions = if (length(top_hits_list) > 0) {
+      add_annotations(top_hits_list[[1]]$table, filtered_iset)
+    } else NULL,
     filtered_iset = filtered_iset,
     logcounts = logcounts,
     pca = pca,
     y = y,
     model_comparison = model_comparison,
-    null_results = null_results$table
+    null_results = null_results$table,  # Updated to match your new structure
+    all_results = top_hits_list
   )
-  
   cat("\nDifferential analysis at", resolution, "bp resolution complete!\n")
   
   return(result)
