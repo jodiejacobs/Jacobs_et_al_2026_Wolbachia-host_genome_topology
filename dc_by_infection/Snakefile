@@ -108,11 +108,12 @@ rule diffhic_analysis:
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
         conda activate {R_DIFFHIC_ENV}
         
-        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/micro-c/diffhic_analysis/analyze_multi_resolution_3.R \
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution_3.R \
         --data_dir={params.contacts_dir} \
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
-        --threads={threads} 
+        --threads={threads} \
+        --fdr=0.05
         '''
 
 # Filter interactions based on structural variants
