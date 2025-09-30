@@ -95,8 +95,9 @@ read_resolution_data <- function(resolution, data_dir, min_count) {
     # Read with data.table
     dt <- fread(file, header = TRUE)
     
-    # FIXED: Use proper data.table syntax with ..resolution and ..min_count
-    dt_filtered <- dt[resolution == ..resolution & count >= ..min_count]
+    # FIXED: Use standard filtering without .. prefix
+    # The .. prefix isn't needed when the variable names don't conflict with column names
+    dt_filtered <- dt[dt$resolution == resolution & dt$count >= min_count]
     
     cat("    Filtered to", nrow(dt_filtered), "interactions (resolution=", resolution, ", count>=", min_count, ")\n")
     
@@ -107,9 +108,9 @@ read_resolution_data <- function(resolution, data_dir, min_count) {
     
     # Split by condition and replicate
     for (cond in unique(dt_filtered$condition)) {
-      for (rep in unique(dt_filtered[condition == cond]$replicate)) {
+      for (rep in unique(dt_filtered[dt_filtered$condition == cond, ]$replicate)) {
         key <- paste0(cond, "_rep", rep)
-        subset_dt <- dt_filtered[condition == cond & replicate == rep]
+        subset_dt <- dt_filtered[dt_filtered$condition == cond & dt_filtered$replicate == rep, ]
         
         if (nrow(subset_dt) > 0) {
           all_data[[key]] <- as.data.frame(subset_dt)

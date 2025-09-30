@@ -45,7 +45,7 @@ rule all:
         f"{output_dir}/sv_filtered/combined_filtered_interactions.csv",
         
         # Chromatin structure analysis
-        f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv",
+        f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv", 
         
         # Architectural protein enrichment
         f"{output_dir}/enrichment/architectural_strain_plots.pdf",
