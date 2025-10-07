@@ -74,8 +74,8 @@ def create_temp_bed_file(df, columns):
     """Create a temporary BED file from DataFrame"""
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.bed', delete=False)
     
-    for idx, row in df.iterrows():
-        temp_file.write(f"{row[columns[0]]}\t{row[columns[1]]}\t{row[columns[2]]}\t{idx}\n")
+    for i, (idx, row) in enumerate(df.iterrows()):
+        temp_file.write(f"{row[columns[0]]}\t{row[columns[1]]}\t{row[columns[2]]}\t{i}\n")
     
     temp_file.close()
     return temp_file.name

@@ -41,9 +41,6 @@ rule all:
         f"{output_dir}/diffhic_results/summary/comprehensive_summary.txt",
         f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         
-        # SV-filtered interactions
-        f"{output_dir}/sv_filtered/combined_filtered_contacts.csv",
-        
         # Chromatin structure analysis
         f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv", 
         
@@ -77,7 +74,7 @@ rule identify_contacts:
         bash scripts/extract_multi_resolution_v5.sh \
         {input.cooler1} {input.cooler2} {output.contacts}
         '''
-        
+
 # Filter contacts based on structural variants (remove the contacts that overlap SV's)
 rule filter_sv_interactions:
     input:
@@ -150,7 +147,7 @@ rule diffhic_analysis:
 rule chromatin_structure_analysis:
     input:
         mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
-        diffhic_results = f"{output_dir}/sv_filtered/combined_filtered_contacts.csv",  # Changed this line
+        diffhic_results = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",  # Changed this line
         null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"   
     output:
         plot = f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
@@ -186,7 +183,7 @@ rule chromatin_structure_analysis:
 # Architectural protein enrichment analysis
 rule architectural_enrichment:
     input:
-        interactions = f"{output_dir}/sv_filtered/combined_filtered_contacts.csv",
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
         genome = genome_file,
         chip_peaks = f"{chip_dir}/.prepared"
@@ -219,7 +216,7 @@ rule architectural_enrichment:
 rule enhancer_class_analysis:
     input:
         enhancers = enhancer_file,
-        interactions = f"{output_dir}/sv_filtered/combined_filtered_contacts.csv",
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"
     output:
         distance_analysis = f"{output_dir}/enhancer_analysis/enhancer_distance_analysis.tsv",
@@ -253,7 +250,7 @@ rule x_chromosome_analysis:
     input:
         has_sites = has_sites_file,
         mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
-        interaction_file = f"{output_dir}/sv_filtered/combined_filtered_contacts.csv"
+        interaction_file = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv"  # Changed this
     output:
         summary = f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
         plots = f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
