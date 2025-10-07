@@ -214,12 +214,16 @@ def filter_interactions_by_sv(interactions_file, sv_df, min_distance=4000):
     
     if file_size > 500 * 1024 * 1024:  # If larger than 500MB
         print("Large file detected, using chunked reading...")
-        chunk_iter = pd.read_csv(interactions_file, chunksize=50000)
+        chunk_iter = pd.read_csv(interactions_file, sep='\t', chunksize=50000)  # Added sep='\t'
         interactions = pd.concat(chunk_iter, ignore_index=True)
     else:
-        interactions = pd.read_csv(interactions_file)
+        interactions = pd.read_csv(interactions_file, sep='\t')  # Added sep='\t'
     
     print(f"Loaded {len(interactions)} interactions")
+    
+    # Rename columns to match expected format (chrom1/chrom2 -> chr1/chr2)
+    if 'chrom1' in interactions.columns:
+        interactions = interactions.rename(columns={'chrom1': 'chr1', 'chrom2': 'chr2'})
     
     # Ensure coordinate columns are numeric
     coord_cols = ['start1', 'end1', 'start2', 'end2']
@@ -301,7 +305,7 @@ def main():
         if len(sv_df) == 0:
             print("Warning: No structural variants found with specified quality threshold")
             # Just copy the input file if no SVs to filter
-            interactions = pd.read_csv(args.interactions)
+            interactions = pd.read_csv(args.interactions, sep='\t')  # Added sep='\t'
             interactions.to_csv(args.output, index=False)
             print(f"No filtering applied. Output saved to {args.output}")
             return
