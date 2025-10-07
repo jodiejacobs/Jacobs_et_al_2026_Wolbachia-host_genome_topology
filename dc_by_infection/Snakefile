@@ -78,10 +78,39 @@ rule identify_contacts:
         {input.cooler1} {input.cooler2} {output.contacts}
         '''
 
+# Filter contacts based on structural variants (remove the contacts that overlap SV's)
+rule filter_sv_interactions:
+    input:
+        interactions = f"{output_dir}/contacts/{{sample}}_contacts.tsv"
+        vcf = sv_vcf
+    output:
+        filtered = f"{output_dir}/sv_filtered/combined_filtered_contacts.csv"
+    params:
+        quality = 10,
+        min_distance = 4000
+    resources:
+        mem_mb = 50000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/filter_sv_interactions.py \
+            --interactions {input.interactions} \
+            --vcf {input.vcf} \
+            --output {output.filtered} \
+            --quality {params.quality} \
+            --min_distance {params.min_distance} \
+            --chunk_size 25000
+        '''
+
+
 # DiffHic analysis - creates all outputs including summaries, tables, and plots
 rule diffhic_analysis:
     input:
-        contacts = expand(f"{output_dir}/contacts/{{sample}}_contacts.tsv", sample=samples)
+        contacts = expand(f"{output_dir}/sv_filtered/combined_filtered_contacts.csv", sample=samples)
     output:
         # Per-resolution outputs
         results = expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions.csv", 
@@ -117,33 +146,9 @@ rule diffhic_analysis:
         --fdr=0.05
         '''
 
-# Filter interactions based on structural variants
-rule filter_sv_interactions:
-    input:
-        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
-        vcf = sv_vcf
-    output:
-        filtered = f"{output_dir}/sv_filtered/combined_filtered_interactions.csv"
-    params:
-        quality = 10,
-        min_distance = 4000
-    resources:
-        mem_mb = 50000,
-        runtime = 120
-    threads: 4
-    shell:
-        '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
-        
-        python scripts/filter_sv_interactions.py \
-            --interactions {input.interactions} \
-            --vcf {input.vcf} \
-            --output {output.filtered} \
-            --quality {params.quality} \
-            --min_distance {params.min_distance} \
-            --chunk_size 25000
-        '''
+# Merge the diffhic analysis outputs:
+
+
 
 # Chromatin structure analysis using cooltools
 rule chromatin_structure_analysis:
