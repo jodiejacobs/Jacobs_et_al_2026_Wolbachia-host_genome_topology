@@ -86,8 +86,8 @@ rule filter_sv_interactions:
         quality = 10,
         min_distance = 4000
     resources:
-        mem_mb = 50000,
-        runtime = 120
+        mem_mb = 128000,
+        runtime = 480
     threads: 4
     shell:
         '''
@@ -128,7 +128,7 @@ rule diffhic_analysis:
         resolution = "1000,8000,32000,128000" 
     resources: 
         mem_mb=200000,
-        runtime=240
+        runtime=360
     threads: 128 
     shell:
         '''
