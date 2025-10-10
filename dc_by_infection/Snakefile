@@ -87,7 +87,7 @@ rule filter_sv_interactions:
         min_distance = 4000
     resources:
         mem_mb = 128000,
-        runtime = 480
+        runtime = 720
     threads: 4
     shell:
         '''

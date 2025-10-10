@@ -83,8 +83,10 @@ dir.create(file.path(output_dir, "volcano_plots"), showWarnings = FALSE)
 #=============================================================================
 
 # Read and filter data for a specific resolution
+# Read and filter data for a specific resolution
 read_resolution_data <- function(resolution, data_dir, min_count) {
-  contact_files <- list.files(data_dir, pattern = "_contacts\\.tsv$", full.names = TRUE)
+  # Look for filtered CSV files instead of original TSV files
+  contact_files <- list.files(data_dir, pattern = "_filtered_contacts\\.csv$", full.names = TRUE)
   cat("\nResolution", resolution, "bp - found", length(contact_files), "contact files\n")
   
   all_data <- list()
@@ -95,8 +97,12 @@ read_resolution_data <- function(resolution, data_dir, min_count) {
     # Read with data.table
     dt <- fread(file, header = TRUE)
     
-    # FIXED: Use standard filtering without .. prefix
-    # The .. prefix isn't needed when the variable names don't conflict with column names
+    # Rename columns if they use 'chr' instead of 'chrom' (from filtered CSV files)
+    if ("chr1" %in% colnames(dt)) {
+      setnames(dt, old = c("chr1", "chr2"), new = c("chrom1", "chrom2"))
+    }
+    
+    # Filter by resolution and count
     dt_filtered <- dt[dt$resolution == resolution & dt$count >= min_count]
     
     cat("    Filtered to", nrow(dt_filtered), "interactions (resolution=", resolution, ", count>=", min_count, ")\n")
