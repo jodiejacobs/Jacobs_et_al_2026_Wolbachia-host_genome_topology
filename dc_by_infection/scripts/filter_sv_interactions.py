@@ -55,9 +55,9 @@ def read_sv_vcf(vcf_file, quality_threshold=10):
                 end = int(info_dict.get('END', pos + 1))
             except ValueError:
                 end = pos + 1
-            
-            # Add padding around breakpoints (200kb as in methods)
-            padding = 200000
+
+            # Add padding around breakpoints (200bp as in methods)
+            padding = 200
             svs.append({
                 'chrom': chrom,
                 'start': max(0, pos - padding),
