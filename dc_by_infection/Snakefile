@@ -11,8 +11,7 @@ conditions = ['DOX','wMel']
 infection = ['wMel']
 replicates = ['1', '2']
 chromosomes = ['2L', '2R', '3L', '3R', '4', 'X', 'Y']
-resolutions = [1000, 8000, 32000, 128000]
-RESOLUTIONS = resolutions
+resolutions = [128000, 32000, 8000, 1000]  # Reversed order
 
 # Base directories
 data_dir = '/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/maps'
@@ -111,9 +110,9 @@ rule diffhic_analysis:
     output:
         # Per-resolution outputs
         results = expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions.csv", 
-                        resolution=RESOLUTIONS),
+                        resolution=resolutions),
         annotated = expand(f"{output_dir}/diffhic_results/res_{{resolution}}/annotated_differential_interactions.csv", 
-                          resolution=RESOLUTIONS),
+                          resolution=resolutions),
         # Summary outputs (created by R script)
         comprehensive_summary = f"{output_dir}/diffhic_results/summary/comprehensive_summary.txt",
         resolution_summary = f"{output_dir}/diffhic_results/summary/resolution_summary.csv",
@@ -127,9 +126,9 @@ rule diffhic_analysis:
         output_dir = f"{output_dir}/diffhic_results",
         resolution = "1000,8000,32000,128000" 
     resources: 
-        mem_mb=200000,
-        runtime=360
-    threads: 128 
+        mem_mb=320000,
+        runtime=720
+    threads: 256 
     shell:
         '''
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh

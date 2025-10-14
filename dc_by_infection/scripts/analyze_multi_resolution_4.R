@@ -32,7 +32,7 @@ option_list <- list(
               help="Directory containing contact files"),
   make_option(c("--resolutions"), type="character", default="1000,8000,32000,128000",
               help="Comma-separated list of resolutions"),
-  make_option(c("--min_count"), type="integer", default=2,
+  make_option(c("--min_count"), type="integer", default=5,
               help="Minimum read count"),
   make_option(c("--min_samples"), type="integer", default=2,
               help="Minimum samples with min_count"),
@@ -83,9 +83,7 @@ dir.create(file.path(output_dir, "volcano_plots"), showWarnings = FALSE)
 #=============================================================================
 
 # Read and filter data for a specific resolution
-# Read and filter data for a specific resolution
 read_resolution_data <- function(resolution, data_dir, min_count) {
-  # Look for filtered CSV files instead of original TSV files
   contact_files <- list.files(data_dir, pattern = "_filtered_contacts\\.csv$", full.names = TRUE)
   cat("\nResolution", resolution, "bp - found", length(contact_files), "contact files\n")
   
@@ -94,35 +92,31 @@ read_resolution_data <- function(resolution, data_dir, min_count) {
   for (file in contact_files) {
     cat("  Reading:", basename(file), "\n")
     
-    # Read with data.table
+    # Read once with data.table
     dt <- fread(file, header = TRUE)
     
-    # Rename columns if they use 'chr' instead of 'chrom' (from filtered CSV files)
+    # Rename if needed
     if ("chr1" %in% colnames(dt)) {
       setnames(dt, old = c("chr1", "chr2"), new = c("chrom1", "chrom2"))
     }
     
-    # Filter by resolution and count
-    dt_filtered <- dt[dt$resolution == resolution & dt$count >= min_count]
+    # Filter efficiently with data.table
+    dt_filtered <- dt[resolution == resolution & count >= min_count]
     
-    cat("    Filtered to", nrow(dt_filtered), "interactions (resolution=", resolution, ", count>=", min_count, ")\n")
+    cat("    Filtered to", nrow(dt_filtered), "interactions\n")
     
     if (nrow(dt_filtered) == 0) {
       warning("    No data after filtering!")
       next
     }
     
-    # Split by condition and replicate
-    for (cond in unique(dt_filtered$condition)) {
-      for (rep in unique(dt_filtered[dt_filtered$condition == cond, ]$replicate)) {
-        key <- paste0(cond, "_rep", rep)
-        subset_dt <- dt_filtered[dt_filtered$condition == cond & dt_filtered$replicate == rep, ]
-        
-        if (nrow(subset_dt) > 0) {
-          all_data[[key]] <- as.data.frame(subset_dt)
-          cat("    ", key, ":", nrow(subset_dt), "interactions\n")
-        }
-      }
+    # Split by condition and replicate efficiently
+    splits <- dt_filtered[, .(data = list(.SD)), by = .(condition, replicate)]
+    
+    for (i in 1:nrow(splits)) {
+      key <- paste0(splits$condition[i], "_rep", splits$replicate[i])
+      all_data[[key]] <- as.data.frame(splits$data[[i]])
+      cat("    ", key, ":", nrow(all_data[[key]]), "interactions\n")
     }
   }
   
@@ -151,15 +145,13 @@ create_iset <- function(data) {
 combine_isets <- function(iset_list) {
   cat("Combining", length(iset_list), "samples...\n")
   
-  # Extract all unique interactions
-  all_interactions <- data.frame()
-  
-  for (i in seq_along(iset_list)) {
+  # Extract all interactions efficiently using data.table
+  all_interactions_list <- lapply(seq_along(iset_list), function(i) {
     gi <- interactions(iset_list[[i]])
     a1 <- anchors(gi, type="first")
     a2 <- anchors(gi, type="second")
     
-    df <- data.frame(
+    data.table(
       chr1 = as.character(seqnames(a1)),
       start1 = start(a1),
       end1 = end(a1),
@@ -167,35 +159,33 @@ combine_isets <- function(iset_list) {
       start2 = start(a2),
       end2 = end(a2),
       count = assay(iset_list[[i]])[, 1],
-      sample = i
+      sample_idx = i
     )
-    
-    all_interactions <- rbind(all_interactions, df)
-  }
+  })
   
-  # Create unique interaction IDs
-  all_interactions$id <- paste(
-    all_interactions$chr1, all_interactions$start1, all_interactions$end1,
-    all_interactions$chr2, all_interactions$start2, all_interactions$end2,
-    sep = "_"
-  )
+  # Combine using data.table (much faster than rbind)
+  all_interactions <- rbindlist(all_interactions_list)
+  
+  # Create interaction ID more efficiently
+  all_interactions[, id := paste(chr1, start1, end1, chr2, start2, end2, sep = "_")]
   
   # Get unique interactions
-  unique_ints <- unique(all_interactions[, c("chr1", "start1", "end1", "chr2", "start2", "end2", "id")])
+  unique_ints <- unique(all_interactions[, .(chr1, start1, end1, chr2, start2, end2, id)])
   cat("Found", nrow(unique_ints), "unique interactions\n")
   
-  # Build count matrix
-  count_matrix <- matrix(0, nrow = nrow(unique_ints), ncol = length(iset_list))
-  colnames(count_matrix) <- names(iset_list)
-  rownames(unique_ints) <- unique_ints$id
+  # Build count matrix efficiently using dcast
+  count_data <- dcast(all_interactions, id ~ sample_idx, 
+                      value.var = "count", 
+                      fill = 0, 
+                      fun.aggregate = sum)
   
-  for (i in 1:length(iset_list)) {
-    sample_data <- all_interactions[all_interactions$sample == i, ]
-    for (j in 1:nrow(sample_data)) {
-      row_idx <- which(rownames(unique_ints) == sample_data$id[j])
-      count_matrix[row_idx, i] <- count_matrix[row_idx, i] + sample_data$count[j]
-    }
-  }
+  # Match IDs and create matrix
+  setkey(unique_ints, id)
+  setkey(count_data, id)
+  count_data <- count_data[unique_ints$id]
+  
+  count_matrix <- as.matrix(count_data[, -1])
+  colnames(count_matrix) <- names(iset_list)
   
   # Create GInteractions
   anchor1 <- GRanges(
@@ -212,34 +202,6 @@ combine_isets <- function(iset_list) {
   combined_iset <- InteractionSet(list(counts = count_matrix), interactions = gi)
   
   return(combined_iset)
-}
-
-# Add annotations to results
-add_annotations <- function(results_table, iset) {
-  gi <- interactions(iset)
-  a1 <- anchors(gi, type="first")
-  a2 <- anchors(gi, type="second")
-  
-  chr1 <- as.character(seqnames(a1))
-  chr2 <- as.character(seqnames(a2))
-  is_cis <- chr1 == chr2
-  
-  distance <- rep(NA, length(gi))
-  distance[is_cis] <- end(a2)[is_cis] - start(a1)[is_cis]
-  
-  annotations <- data.frame(
-    chr1 = chr1,
-    start1 = start(a1),
-    end1 = end(a1),
-    chr2 = chr2,
-    start2 = start(a2),
-    end2 = end(a2),
-    interaction_type = ifelse(is_cis, "cis", "trans"),
-    interaction_distance = distance,
-    row.names = rownames(results_table)
-  )
-  
-  return(cbind(results_table, annotations))
 }
 
 # Generate comprehensive interaction tables
