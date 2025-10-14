@@ -49,9 +49,10 @@ rule all:
         # Enhancer class analysis
         f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
         
-        # X chromosome analysis
+        # X chromosome analysis (with null comparisons)
         f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
         f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
+        # f"{output_dir}/x_analysis/x_regulation_null_comparison_stats.tsv",
 
 # Contact extraction
 rule identify_contacts:
@@ -127,7 +128,7 @@ rule diffhic_analysis:
         resolution = "1000,8000,32000,128000" 
     resources: 
         mem_mb=128000,
-        runtime=240
+        runtime=120
     threads: 125 
     shell:
         '''
@@ -244,37 +245,38 @@ rule enhancer_class_analysis:
             --output_prefix {params.output_prefix}
         '''
 
-# X chromosome regulation analysis
+# X chromosome regulation analysis with null model comparison
 rule x_chromosome_analysis:
     input:
         has_sites = has_sites_file,
         mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
-        interaction_file = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv"  # Changed this
+        interaction_file = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"
     output:
-        summary = f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
-        plots = f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
-        has_contacts = f"{output_dir}/x_analysis/x_regulation_has_contact_comparison.tsv",
-        compartment_changes = f"{output_dir}/x_analysis/x_regulation_x_compartment_changes.tsv"
+        summary = f"{output_dir}/x_analysis/x_chromosome_summary.tsv",
+        plots = f"{output_dir}/x_analysis/x_chromosome_analysis.pdf",
+        has_contacts = f"{output_dir}/x_analysis/x_chromosome_has_contact_comparison.tsv",
+        compartment_changes = f"{output_dir}/x_analysis/x_chromosome_compartment_changes.tsv",
+        null_comparison_stats = f"{output_dir}/x_analysis/x_chromosome_null_comparison_stats.tsv",
+        null_comparison_detailed = f"{output_dir}/x_analysis/x_chromosome_null_comparison_detailed.tsv"
     params:
-        conditions = " ".join(conditions),
+        conditions = conditions,  # Pass as list, not string
         resolution = 8000,
-        output_prefix = f"{output_dir}/x_analysis/x_regulation"
+        output_prefix = f"{output_dir}/x_analysis/x_chromosome"
+    conda:
+        COOLTOOLS_ENV  # Use conda: directive instead of shell activation
     resources:
         mem_mb = 200000,
         runtime = 480
     threads: 16
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {COOLTOOLS_ENV}
-        
-        mcool_files=({input.mcool_files})
-        
         python scripts/x_chromosome_analysis.py \
             --has_sites {input.has_sites} \
-            --mcool_files ${{mcool_files[@]}} \
+            --mcool_files {input.mcool_files} \
             --conditions {params.conditions} \
             --interaction_file {input.interaction_file} \
+            --null_interaction_file {input.null_model} \
             --resolution {params.resolution} \
             --output_prefix {params.output_prefix}
         '''

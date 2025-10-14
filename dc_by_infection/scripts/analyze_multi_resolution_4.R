@@ -100,7 +100,7 @@ read_resolution_data <- function(resolution, data_dir, min_count) {
     }
     
     # Filter efficiently with data.table
-    dt_filtered <- dt[resolution == resolution & count >= min_count]
+    dt_filtered <- dt[dt$resolution == resolution & dt$count >= min_count]
     
     cat("    Filtered to", nrow(dt_filtered), "interactions\n")
     
@@ -309,88 +309,110 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
     return(NULL)
   }
   
-  # Create labels
-  plot_data$label <- paste0(
-    plot_data$chr1, ":", 
-    format(plot_data$start1, scientific = FALSE), "-", 
-    format(plot_data$end1, scientific = FALSE), "_",
-    plot_data$chr2, ":", 
-    format(plot_data$start2, scientific = FALSE), "-",
-    format(plot_data$end2, scientific = FALSE)
-  )
-  
-  # Calculate -log10 p-values
-  plot_data$neg_log10_pval <- -log10(plot_data[[pval_col]])
-  
-  # Color coding
-  plot_data$color <- "grey80"
-  plot_data$color[abs(plot_data[[logFC_col]]) > logFC_threshold] <- "grey60"
-  plot_data$color[plot_data[[fdr_col]] < fdr_threshold] <- "grey40"
-  
-  sig_idx <- plot_data[[fdr_col]] < fdr_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
-  plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#8ecc85"
-  plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#1bab4b"
-  
-  # Label top 15 points
-  plot_data$to_label <- FALSE
-  sig_points <- plot_data[sig_idx, ]
-  
-  if (nrow(sig_points) > 0) {
-    sig_points <- sig_points[order(sig_points[[fdr_col]], -abs(sig_points[[logFC_col]])), ]
-    top_n <- min(15, nrow(sig_points))
-    top_sig_idx <- rownames(sig_points)[1:top_n]
-    plot_data$to_label[rownames(plot_data) %in% top_sig_idx] <- TRUE
-  }
-  
-  # Count significant points
-  sig_up <- sum(sig_idx & plot_data[[logFC_col]] > 0)
-  sig_down <- sum(sig_idx & plot_data[[logFC_col]] < 0)
-  
-  # Create plot
-  p <- ggplot(plot_data, aes(x = .data[[logFC_col]], y = neg_log10_pval)) +
-    geom_point(aes(color = color), size = 2, alpha = 0.75) +
-    scale_color_identity() +
-    geom_text_repel(
-      data = subset(plot_data, to_label),
-      aes(label = label),
-      size = 2.5,
-      box.padding = 0.5,
-      point.padding = 0.2,
-      segment.color = "grey50",
-      max.overlaps = 15,
-      min.segment.length = 0
-    ) +
-    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
-    geom_vline(xintercept = c(-logFC_threshold, logFC_threshold), linetype = "dashed", color = "grey") +
-    theme_bw(base_size = 12) +
-    labs(
-      title = paste0(title, subtitle),
-      subtitle = paste0("FDR < ", fdr_threshold, ", |log2FC| > ", logFC_threshold),
-      x = "log2 Fold Change",
-      y = "-log10(P-value)",
-      caption = paste0('Total = ', nrow(plot_data), ' | Labeled top ', sum(plot_data$to_label))
-    ) +
-    annotate(
-      "text",
-      x = max(plot_data[[logFC_col]], na.rm = TRUE) * 0.85,
-      y = max(plot_data$neg_log10_pval, na.rm = TRUE) * 0.9,
-      label = paste0("UP (positive): ", sig_up, "\nUP (negative): ", sig_down),
-      hjust = 1,
-      size = 3.5
+  # Wrap everything in tryCatch to ensure proper cleanup
+  tryCatch({
+    # Create labels
+    plot_data$label <- paste0(
+      plot_data$chr1, ":", 
+      format(plot_data$start1, scientific = FALSE), "-", 
+      format(plot_data$end1, scientific = FALSE), "_",
+      plot_data$chr2, ":", 
+      format(plot_data$start2, scientific = FALSE), "-",
+      format(plot_data$end2, scientific = FALSE)
     )
-  
-  pdf(output_file, width = 12, height = 10)
-  print(p)
-  dev.off()
-  
-  cat("Created volcano plot:", output_file, "\n")
-  
-  return(p)
+    
+    # Calculate -log10 p-values
+    plot_data$neg_log10_pval <- -log10(plot_data[[pval_col]])
+    
+    # Color coding
+    plot_data$color <- "grey80"
+    plot_data$color[abs(plot_data[[logFC_col]]) > logFC_threshold] <- "grey60"
+    plot_data$color[plot_data[[fdr_col]] < fdr_threshold] <- "grey40"
+    
+    sig_idx <- plot_data[[fdr_col]] < fdr_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
+    plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#8ecc85"
+    plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#1bab4b"
+    
+    # Label top 15 points
+    plot_data$to_label <- FALSE
+    sig_points <- plot_data[sig_idx, ]
+    
+    if (nrow(sig_points) > 0) {
+      sig_points <- sig_points[order(sig_points[[fdr_col]], -abs(sig_points[[logFC_col]])), ]
+      top_n <- min(15, nrow(sig_points))
+      top_sig_idx <- rownames(sig_points)[1:top_n]
+      plot_data$to_label[rownames(plot_data) %in% top_sig_idx] <- TRUE
+    }
+    
+    # Count significant points
+    sig_up <- sum(sig_idx & plot_data[[logFC_col]] > 0)
+    sig_down <- sum(sig_idx & plot_data[[logFC_col]] < 0)
+    
+    # Create plot
+    p <- ggplot(plot_data, aes(x = .data[[logFC_col]], y = neg_log10_pval)) +
+      geom_point(aes(color = color), size = 2, alpha = 0.75) +
+      scale_color_identity() +
+      geom_text_repel(
+        data = subset(plot_data, to_label),
+        aes(label = label),
+        size = 2.5,
+        box.padding = 0.5,
+        point.padding = 0.2,
+        segment.color = "grey50",
+        max.overlaps = 15,
+        min.segment.length = 0
+      ) +
+      geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+      geom_vline(xintercept = c(-logFC_threshold, logFC_threshold), linetype = "dashed", color = "grey") +
+      theme_bw(base_size = 12) +
+      labs(
+        title = paste0(title, subtitle),
+        subtitle = paste0("FDR < ", fdr_threshold, ", |log2FC| > ", logFC_threshold),
+        x = "log2 Fold Change",
+        y = "-log10(P-value)",
+        caption = paste0('Total = ', nrow(plot_data), ' | Labeled top ', sum(plot_data$to_label))
+      ) +
+      annotate(
+        "text",
+        x = max(plot_data[[logFC_col]], na.rm = TRUE) * 0.85,
+        y = max(plot_data$neg_log10_pval, na.rm = TRUE) * 0.9,
+        label = paste0("UP (positive): ", sig_up, "\nUP (negative): ", sig_down),
+        hjust = 1,
+        size = 3.5
+      )
+    
+    # Close any open devices first
+    while (dev.cur() > 1) {
+      dev.off()
+    }
+    
+    # Open PDF device
+    pdf(output_file, width = 12, height = 10)
+    print(p)
+    dev.off()
+    
+    cat("Created volcano plot:", output_file, "\n")
+    
+    return(p)
+    
+  }, error = function(e) {
+    # Ensure device is closed on error
+    while (dev.cur() > 1) {
+      try(dev.off(), silent = TRUE)
+    }
+    warning(paste0("Failed to create plot ", output_file, ": ", e$message))
+    return(NULL)
+  })
 }
 
 # Create volcano plots for all resolutions
 create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold) {
   cat("\nCreating custom volcano plots...\n")
+  
+  # Close any open graphics devices
+  while (dev.cur() > 1) {
+    try(dev.off(), silent = TRUE)
+  }
   
   volcano_dir <- file.path(output_dir, "volcano_plots")
   dir.create(volcano_dir, showWarnings = FALSE)
@@ -764,29 +786,37 @@ summary_table <- data.frame(
   Trans = sapply(results_list, function(x) if (!is.null(x$significant)) sum(x$significant$interaction_type == "trans") else 0)
 )
 
+# Ensure summary directory exists
+dir.create(summary_dir, showWarnings = FALSE, recursive = TRUE)
+
 write.csv(summary_table, file.path(summary_dir, "resolution_summary.csv"), row.names = FALSE)
 
 # Text summary
-sink(file.path(summary_dir, "comprehensive_summary.txt"))
-cat("MULTI-RESOLUTION ANALYSIS SUMMARY\n")
-cat("=================================\n\n")
-cat("Parameters:\n")
-cat("  Min count:", min_count, "\n")
-cat("  Min samples:", min_samples, "\n")
-cat("  FDR threshold:", fdr_threshold, "\n\n")
-cat("Results by Resolution:\n")
-print(summary_table)
-cat("\n")
-
-for (res in names(results_list)) {
-  if (!is.null(results_list[[res]]$model_comparison)) {
-    mc <- results_list[[res]]$model_comparison
-    cat(res, "bp resolution:\n")
-    cat("  LRT p-value:", mc$LRT_pval[1], "\n")
-    cat("  Significant:", ifelse(mc$LRT_pval[1] < 0.05, "YES", "NO"), "\n\n")
+tryCatch({
+  sink(file.path(summary_dir, "comprehensive_summary.txt"))
+  cat("MULTI-RESOLUTION ANALYSIS SUMMARY\n")
+  cat("=================================\n\n")
+  cat("Parameters:\n")
+  cat("  Min count:", min_count, "\n")
+  cat("  Min samples:", min_samples, "\n")
+  cat("  FDR threshold:", fdr_threshold, "\n\n")
+  cat("Results by Resolution:\n")
+  print(summary_table)
+  cat("\n")
+  
+  for (res in names(results_list)) {
+    if (!is.null(results_list[[res]]$model_comparison)) {
+      mc <- results_list[[res]]$model_comparison
+      cat(res, "bp resolution:\n")
+      cat("  LRT p-value:", mc$LRT_pval[1], "\n")
+      cat("  Significant:", ifelse(mc$LRT_pval[1] < 0.05, "YES", "NO"), "\n\n")
+    }
   }
-}
-sink()
+  sink()
+}, error = function(e) {
+  sink()  # Make sure to close sink on error
+  warning(paste0("Failed to write comprehensive summary: ", e$message))
+})
 
 cat("\nAnalysis complete! Results in:", output_dir, "\n")
 cat("Session info:\n")
