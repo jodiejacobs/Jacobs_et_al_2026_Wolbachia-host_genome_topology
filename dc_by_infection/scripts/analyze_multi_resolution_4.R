@@ -1,6 +1,5 @@
 #!/usr/bin/env Rscript
 # Simplified Multi-Resolution diffHic Analysis with Volcano Plots
-
 #=============================================================================
 # 1. Setup and Load Libraries
 #=============================================================================
@@ -204,6 +203,34 @@ combine_isets <- function(iset_list) {
   return(combined_iset)
 }
 
+# Add annotations to results
+add_annotations <- function(results_table, iset) {
+  gi <- interactions(iset)
+  a1 <- anchors(gi, type="first")
+  a2 <- anchors(gi, type="second")
+  
+  chr1 <- as.character(seqnames(a1))
+  chr2 <- as.character(seqnames(a2))
+  is_cis <- chr1 == chr2
+  
+  distance <- rep(NA, length(gi))
+  distance[is_cis] <- end(a2)[is_cis] - start(a1)[is_cis]
+  
+  annotations <- data.frame(
+    chr1 = chr1,
+    start1 = start(a1),
+    end1 = end(a1),
+    chr2 = chr2,
+    start2 = start(a2),
+    end2 = end(a2),
+    interaction_type = ifelse(is_cis, "cis", "trans"),
+    interaction_distance = distance,
+    row.names = rownames(results_table)
+  )
+  
+  return(cbind(results_table, annotations))
+}
+
 # Generate comprehensive interaction tables
 generate_interaction_tables <- function(results_list, output_dir, fdr_threshold) {
   cat("\nGenerating comprehensive interaction tables...\n")
@@ -301,8 +328,8 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
   plot_data$color[plot_data[[fdr_col]] < fdr_threshold] <- "grey40"
   
   sig_idx <- plot_data[[fdr_col]] < fdr_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
-  plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#8ecc85"  # UP in reference
-  plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#1bab4b"  # UP in treatment
+  plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#8ecc85"
+  plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#1bab4b"
   
   # Label top 15 points
   plot_data$to_label <- FALSE
@@ -450,6 +477,7 @@ process_resolution <- function(resolution) {
   cat("\n========================================\n")
   cat("Processing resolution:", resolution, "bp\n")
   cat("========================================\n")
+  cat("Time:", format(Sys.time()), "\n")
   
   # Read data
   sample_data <- read_resolution_data(resolution, data_dir, min_count)
@@ -460,26 +488,43 @@ process_resolution <- function(resolution) {
   }
   
   # Create InteractionSets
+  cat("\nCreating InteractionSets...\n")
   iset_list <- lapply(sample_data, create_iset)
   
   # Combine all samples
+  cat("\nCombining samples...\n")
   combined_iset <- combine_isets(iset_list)
   combined_iset$totals <- colSums(assay(combined_iset))
   
   cat("Combined set:", nrow(combined_iset), "interactions x", ncol(assay(combined_iset)), "samples\n")
   
-  # Filter low-abundance interactions
+  # Filter low-abundance interactions MORE AGGRESSIVELY
+  cat("\nFiltering interactions...\n")
+  cat("  Before filtering:", nrow(combined_iset), "interactions\n")
+  
+  # Keep only interactions present in at least min_samples with count >= min_count
   keep <- rowSums(assay(combined_iset) >= min_count) >= min_samples
+  
+  # Additional filter: require minimum total count across all samples
+  min_total_count <- min_count * min_samples * 2
+  keep <- keep & (rowSums(assay(combined_iset)) >= min_total_count)
+  
   filtered_iset <- combined_iset[keep, ]
-  cat("After filtering:", nrow(filtered_iset), "interactions\n")
+  cat("  After filtering:", nrow(filtered_iset), "interactions\n")
+  
+  if (nrow(filtered_iset) == 0) {
+    warning("No interactions remaining after filtering!")
+    return(NULL)
+  }
   
   # Create DGEList
+  cat("\nCreating DGEList...\n")
   y <- asDGEList(filtered_iset)
   
   # Setup design
   samples <- colnames(y)
-  conditions <- sapply(strsplit(samples, "_rep"), `[`, 1)
-  replicates <- sapply(strsplit(samples, "_rep"), `[`, 2)
+  conditions <- sapply(strsplit(samples, "_rep"), function(x) x[1])
+  replicates <- sapply(strsplit(samples, "_rep"), function(x) x[2])
   
   # Set factor levels with reference first
   all_conditions <- unique(conditions)
@@ -498,16 +543,53 @@ process_resolution <- function(resolution) {
     row.names = samples
   )
   
+  cat("\nSample information:\n")
   print(sample_table)
   
   design <- model.matrix(~infection, data = sample_table)
   
-  # Normalize and estimate dispersion
+  # Normalize
+  cat("\nNormalizing...\n")
   y <- calcNormFactors(y)
   logcounts <- cpm(y, log = TRUE)
-  y <- estimateDisp(y, design)
+  
+  # Dispersion estimation with optimization for large datasets
+  cat("\nEstimating dispersion for", nrow(y), "interactions...\n")
+  cat("Time:", format(Sys.time()), "\n")
+  
+  if (nrow(y) > 100000) {
+    cat("Large dataset detected - using optimized dispersion estimation\n")
+    
+    # Step 1: Estimate on a subset first
+    set.seed(42)
+    subset_size <- min(50000, nrow(y))
+    subset_idx <- sample(nrow(y), subset_size)
+    y_subset <- y[subset_idx, ]
+    
+    cat("  Estimating dispersion on", subset_size, "interaction subset...\n")
+    y_subset <- estimateDisp(y_subset, design, robust=TRUE)
+    
+    cat("  Subset common dispersion:", y_subset$common.dispersion, "\n")
+    
+    # Step 2: Use subset estimates as priors for full dataset
+    cat("  Applying estimates to full dataset...\n")
+    y$common.dispersion <- y_subset$common.dispersion
+    y$prior.df <- y_subset$prior.df
+    
+    # Estimate trended and tagwise dispersions with priors
+    y <- estimateGLMTrendedDisp(y, design)
+    y <- estimateGLMTagwiseDisp(y, design)
+    
+  } else {
+    y <- estimateDisp(y, design, robust=TRUE)
+  }
+  
+  cat("Dispersion estimation complete\n")
+  cat("  Common dispersion:", y$common.dispersion, "\n")
+  cat("Time:", format(Sys.time()), "\n")
   
   # QC plots
+  cat("\nGenerating QC plots...\n")
   pdf(file.path(output_res_dir, "qc_plots.pdf"), width = 10, height = 5)
   par(mfrow = c(1, 2))
   
@@ -525,8 +607,19 @@ process_resolution <- function(resolution) {
   
   dev.off()
   
-  # Fit models
-  fit <- glmQLFit(y, design)
+  # Fit models - use faster method for very large datasets
+  cat("\nFitting models...\n")
+  cat("Time:", format(Sys.time()), "\n")
+  
+  if (nrow(y) > 500000) {
+    cat("Using glmFit (faster for large datasets)\n")
+    fit <- glmFit(y, design)
+    use_lrt <- TRUE
+  } else {
+    cat("Using glmQLFit\n")
+    fit <- glmQLFit(y, design)
+    use_lrt <- FALSE
+  }
   
   # Test each coefficient
   coef_names <- colnames(design)[-1]
@@ -535,11 +628,18 @@ process_resolution <- function(resolution) {
   for (i in seq_along(coef_names)) {
     coef_name <- coef_names[i]
     cat("\nTesting:", coef_name, "\n")
+    cat("Time:", format(Sys.time()), "\n")
     
-    qlf <- glmQLFTest(fit, coef = i + 1)
-    top <- topTags(qlf, n = Inf)
+    if (use_lrt) {
+      result <- glmLRT(fit, coef = i + 1)
+    } else {
+      result <- glmQLFTest(fit, coef = i + 1)
+    }
+    
+    top <- topTags(result, n = Inf)
     
     # Add annotations
+    cat("  Adding annotations...\n")
     annotated <- add_annotations(top$table, filtered_iset)
     
     # Count significant
@@ -547,21 +647,26 @@ process_resolution <- function(resolution) {
     cat("  Significant:", nrow(sig), "interactions (FDR <", fdr_threshold, ")\n")
     
     # Save results
+    cat("  Saving results...\n")
     write.csv(top$table, 
-              file.path(output_res_dir, paste0("differential_interactions_", coef_name, ".csv")))
+              file.path(output_res_dir, paste0("differential_interactions_", coef_name, ".csv")),
+              row.names = TRUE)
     write.csv(annotated, 
-              file.path(output_res_dir, paste0("annotated_differential_interactions_", coef_name, ".csv")))
+              file.path(output_res_dir, paste0("annotated_differential_interactions_", coef_name, ".csv")),
+              row.names = FALSE)
     
     if (nrow(sig) > 0) {
       write.csv(sig, 
-                file.path(output_res_dir, paste0("significant_interactions_", coef_name, ".csv")))
+                file.path(output_res_dir, paste0("significant_interactions_", coef_name, ".csv")),
+                row.names = FALSE)
     }
     
     # Plots
+    cat("  Generating plots...\n")
     pdf(file.path(output_res_dir, paste0("plots_", coef_name, ".pdf")), width = 10, height = 5)
     par(mfrow = c(1, 2))
     
-    plotMD(qlf, main = paste0("MA plot: ", coef_name))
+    plotMD(result, main = paste0("MA plot: ", coef_name))
     abline(h = c(-1, 0, 1), col = c("blue", "red", "blue"), lty = c(2, 1, 2))
     
     plot(top$table$logFC, -log10(top$table$PValue),
@@ -580,6 +685,7 @@ process_resolution <- function(resolution) {
   }
   
   # Null model
+  cat("\nFitting null model...\n")
   null_fit <- glmFit(y, model.matrix(~1, data = sample_table))
   null_results <- data.frame(
     logFC = rep(0, nrow(y)),
@@ -588,9 +694,12 @@ process_resolution <- function(resolution) {
     FDR = rep(1, nrow(y)),
     row.names = rownames(y)
   )
-  write.csv(null_results, file.path(output_res_dir, "null_model_results.csv"))
+  write.csv(null_results, 
+            file.path(output_res_dir, "null_model_results.csv"),
+            row.names = TRUE)
   
   # Model comparison
+  cat("\nPerforming model comparison...\n")
   lr_stat <- sum(null_fit$deviance) - sum(fit$deviance)
   lr_df <- ncol(design) - 1
   lr_pval <- 1 - pchisq(lr_stat, lr_df)
@@ -603,7 +712,12 @@ process_resolution <- function(resolution) {
     LRT_df = c(lr_df, NA),
     LRT_pval = c(lr_pval, NA)
   )
-  write.csv(model_comparison, file.path(output_res_dir, "model_comparison.csv"), row.names = FALSE)
+  write.csv(model_comparison, 
+            file.path(output_res_dir, "model_comparison.csv"), 
+            row.names = FALSE)
+  
+  cat("\nResolution", resolution, "bp complete!\n")
+  cat("Time:", format(Sys.time()), "\n")
   
   # Return first coefficient results for summary
   first_coef <- results_list[[1]]

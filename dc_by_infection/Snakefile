@@ -126,9 +126,9 @@ rule diffhic_analysis:
         output_dir = f"{output_dir}/diffhic_results",
         resolution = "1000,8000,32000,128000" 
     resources: 
-        mem_mb=320000,
-        runtime=720
-    threads: 256 
+        mem_mb=128000,
+        runtime=240
+    threads: 125 
     shell:
         '''
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
