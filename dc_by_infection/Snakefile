@@ -50,8 +50,7 @@ rule all:
         f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
         
         # X chromosome analysis (with null comparisons)
-        f"{output_dir}/x_analysis/x_regulation_x_regulation_summary.tsv",
-        f"{output_dir}/x_analysis/x_regulation_x_regulation_analysis.pdf",
+        f"{output_dir}/x_analysis/x_chromosome_summary.tsv",
         # f"{output_dir}/x_analysis/x_regulation_null_comparison_stats.tsv",
 
 # Contact extraction
@@ -241,7 +240,6 @@ rule enhancer_class_analysis:
             --null_model {input.null_model} \
             --classification reference_files/enhancer_classification.tsv \
             --fdr_threshold {params.fdr_threshold} \
-            --reference_condition DOX \
             --output_prefix {params.output_prefix}
         '''
 

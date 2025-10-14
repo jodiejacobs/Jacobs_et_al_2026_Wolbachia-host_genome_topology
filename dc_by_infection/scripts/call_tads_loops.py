@@ -3,6 +3,8 @@
 This is a working version as of 6/16/25
 Compare chromatin structure across conditions using existing diffHic results.
 Uses null_model_results.csv for null model and all_results_combined.csv for interaction data.
+
+MODIFIED: Now accepts variable number of conditions (not hardcoded to 4)
 """
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -61,7 +63,7 @@ def load_null_model(null_file):
     print(f"Loaded null model with {len(null_df)} entries")
     return null_df
 
-def identify_tad_boundaries_from_interactions(significant_interactions, window_size=50000):
+def identify_tad_boundaries_from_interactions(significant_interactions, conditions, window_size=50000):
     """
     Identify TAD boundaries based on significant differential interactions.
     TAD boundaries are regions with enriched differential interactions.
@@ -70,79 +72,127 @@ def identify_tad_boundaries_from_interactions(significant_interactions, window_s
     
     all_boundaries = {}
     
-    # Group by infection type
-    for infection in significant_interactions['infection'].unique():
-        if pd.isna(infection):
-            continue
-            
-        print(f"  Processing {infection}...")
-        infection_data = significant_interactions[
-            significant_interactions['infection'] == infection
-        ].copy()
+    # Check if there's an infection/condition column
+    condition_col = None
+    for possible_col in ['infection', 'condition', 'comparison', 'contrast', 'group']:
+        if possible_col in significant_interactions.columns:
+            condition_col = possible_col
+            print(f"  Found condition column: {condition_col}")
+            break
+    
+    # If we have a condition column, group by it
+    if condition_col is not None:
+        groups_to_process = significant_interactions[condition_col].unique()
+        print(f"  Processing {len(groups_to_process)} groups: {groups_to_process}")
         
-        boundaries = []
-        
-        # Process each chromosome
-        for chrom in infection_data['chr1'].unique():
-            chrom_interactions = infection_data[
-                (infection_data['chr1'] == chrom) & 
-                (infection_data['chr2'] == chrom)  # cis interactions only
+        for group_name in groups_to_process:
+            if pd.isna(group_name):
+                continue
+                
+            print(f"  Processing {group_name}...")
+            group_data = significant_interactions[
+                significant_interactions[condition_col] == group_name
             ].copy()
             
-            if len(chrom_interactions) == 0:
-                continue
+            # Process this group
+            boundaries = process_interactions_for_boundaries(group_data, window_size)
             
-            # Create bins across the chromosome
-            max_pos = max(
-                chrom_interactions['end1'].max(),
-                chrom_interactions['end2'].max()
-            )
-            bins = np.arange(0, max_pos + window_size, window_size)
-            
-            # Count interactions in each bin
-            bin_counts = np.zeros(len(bins) - 1)
-            
-            for _, interaction in chrom_interactions.iterrows():
-                # Find which bins this interaction overlaps
-                start_bin = np.searchsorted(bins, interaction['start1'], side='right') - 1
-                end_bin = np.searchsorted(bins, interaction['end2'], side='right') - 1
-                
-                # Add to bins
-                for b in range(max(0, start_bin), min(len(bin_counts), end_bin + 1)):
-                    bin_counts[b] += abs(interaction['logFC'])
-            
-            # Find peaks in interaction density (potential boundaries)
-            from scipy.signal import find_peaks
-            peaks, properties = find_peaks(
-                bin_counts, 
-                height=np.percentile(bin_counts[bin_counts > 0], 75),
-                distance=2  # Minimum 2 bins apart
-            )
-            
-            # Convert peaks to genomic coordinates
-            for peak in peaks:
-                if peak < len(bins) - 1:
-                    boundary_start = bins[peak]
-                    boundary_end = bins[peak + 1]
-                    
-                    boundaries.append({
-                        'chrom': chrom,
-                        'start': boundary_start,
-                        'end': boundary_end,
-                        'boundary_strength': bin_counts[peak],
-                        'n_interactions': np.sum(
-                            (chrom_interactions['start1'] >= boundary_start) &
-                            (chrom_interactions['end2'] <= boundary_end)
-                        )
-                    })
+            if boundaries:
+                boundaries_df = pd.DataFrame(boundaries)
+                # Clean up the condition name
+                clean_name = str(group_name).replace('infectionJW18', '').replace('infection', '')
+                boundaries_df['condition'] = clean_name
+                all_boundaries[clean_name] = boundaries_df
+                print(f"  Found {len(boundaries_df)} boundaries for {clean_name}")
+    else:
+        # No condition column - process all interactions together for each specified condition
+        # This is a fallback - we'll create boundaries based on all significant interactions
+        print(f"  No condition column found. Processing all interactions together.")
+        print(f"  Will assign boundaries to conditions based on logFC direction")
         
-        if boundaries:
-            boundaries_df = pd.DataFrame(boundaries)
-            boundaries_df['condition'] = infection.replace('infectionJW18', '')
-            all_boundaries[infection.replace('infectionJW18', '')] = boundaries_df
-            print(f"  Found {len(boundaries_df)} boundaries for {infection}")
+        # Separate by logFC direction to approximate different conditions
+        for condition in conditions:
+            print(f"  Creating boundaries for {condition}...")
+            if condition in ['DOX', 'uninfected']:
+                # Use all interactions for reference
+                condition_data = significant_interactions.copy()
+            else:
+                # Use positive logFC interactions for infected conditions
+                condition_data = significant_interactions[
+                    significant_interactions['logFC'] > 0
+                ].copy()
+            
+            boundaries = process_interactions_for_boundaries(condition_data, window_size)
+            
+            if boundaries:
+                boundaries_df = pd.DataFrame(boundaries)
+                boundaries_df['condition'] = condition
+                all_boundaries[condition] = boundaries_df
+                print(f"  Found {len(boundaries_df)} boundaries for {condition}")
     
     return all_boundaries
+
+def process_interactions_for_boundaries(interaction_data, window_size=50000):
+    """
+    Helper function to process interactions and identify boundaries.
+    """
+    boundaries = []
+    
+    # Process each chromosome
+    for chrom in interaction_data['chr1'].unique():
+        chrom_interactions = interaction_data[
+            (interaction_data['chr1'] == chrom) & 
+            (interaction_data['chr2'] == chrom)  # cis interactions only
+        ].copy()
+        
+        if len(chrom_interactions) == 0:
+            continue
+        
+        # Create bins across the chromosome
+        max_pos = max(
+            chrom_interactions['end1'].max(),
+            chrom_interactions['end2'].max()
+        )
+        bins = np.arange(0, max_pos + window_size, window_size)
+        
+        # Count interactions in each bin
+        bin_counts = np.zeros(len(bins) - 1)
+        
+        for _, interaction in chrom_interactions.iterrows():
+            # Find which bins this interaction overlaps
+            start_bin = np.searchsorted(bins, interaction['start1'], side='right') - 1
+            end_bin = np.searchsorted(bins, interaction['end2'], side='right') - 1
+            
+            # Add to bins
+            for b in range(max(0, start_bin), min(len(bin_counts), end_bin + 1)):
+                bin_counts[b] += abs(interaction['logFC'])
+        
+        # Find peaks in interaction density (potential boundaries)
+        from scipy.signal import find_peaks
+        peaks, properties = find_peaks(
+            bin_counts, 
+            height=np.percentile(bin_counts[bin_counts > 0], 75) if np.any(bin_counts > 0) else 0,
+            distance=2  # Minimum 2 bins apart
+        )
+        
+        # Convert peaks to genomic coordinates
+        for peak in peaks:
+            if peak < len(bins) - 1:
+                boundary_start = bins[peak]
+                boundary_end = bins[peak + 1]
+                
+                boundaries.append({
+                    'chrom': chrom,
+                    'start': boundary_start,
+                    'end': boundary_end,
+                    'boundary_strength': bin_counts[peak],
+                    'n_interactions': np.sum(
+                        (chrom_interactions['start1'] >= boundary_start) &
+                        (chrom_interactions['end2'] <= boundary_end)
+                    )
+                })
+    
+    return boundaries
 
 def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
     """
@@ -168,9 +218,9 @@ def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
     ref_boundaries = tad_boundaries[ref_condition]
     comparison_results = []
     
-    # Compare each infected condition to reference
-    for infected_condition in ['wMel', 'wRi', 'wWil']:
-        if infected_condition not in tad_boundaries:
+    # Compare each other condition to reference
+    for infected_condition in tad_boundaries.keys():
+        if infected_condition == ref_condition:
             continue
         
         infected_boundaries = tad_boundaries[infected_condition]
@@ -333,21 +383,28 @@ def calculate_compartments_all_conditions(mcool_files, conditions, chromosomes,
     
     return all_compartments
 
-def compare_compartments_to_null(compartment_data, null_model, fdr_threshold=0.05):
+def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_threshold=0.05):
     """
     Compare compartment changes between conditions with FDR correction.
     """
     print("\nComparing compartment changes...")
     
-    if 'DOX' not in compartment_data:
-        print("Warning: DOX condition not found in compartment data")
+    # Find reference condition
+    ref_condition = None
+    for cond in ['DOX', 'uninfected']:
+        if cond in compartment_data:
+            ref_condition = cond
+            break
+    
+    if ref_condition is None:
+        print("Warning: No reference condition found in compartment data")
         return pd.DataFrame()
     
-    uninfected = compartment_data['DOX']
+    uninfected = compartment_data[ref_condition]
     comparison_results = []
     
-    for infected_condition in ['wMel', 'wRi', 'wWil']:
-        if infected_condition not in compartment_data:
+    for infected_condition in conditions:
+        if infected_condition == ref_condition or infected_condition not in compartment_data:
             continue
             
         infected = compartment_data[infected_condition]
@@ -361,7 +418,7 @@ def compare_compartments_to_null(compartment_data, null_model, fdr_threshold=0.0
         )
         
         if len(merged) == 0:
-            print(f"Warning: No matching bins found between DOX and {infected_condition}")
+            print(f"Warning: No matching bins found between {ref_condition} and {infected_condition}")
             continue
         
         # Identify compartment switches
@@ -385,7 +442,7 @@ def compare_compartments_to_null(compartment_data, null_model, fdr_threshold=0.0
         # FDR correction
         _, merged['fdr'], _, _ = multipletests(merged['p_value'], method='fdr_bh')
         merged['significant'] = merged['fdr'] < fdr_threshold
-        merged['comparison'] = f"DOX_vs_{infected_condition}"
+        merged['comparison'] = f"{ref_condition}_vs_{infected_condition}"
         
         # Overall switching statistics
         observed_switches = merged['switch'].sum()
@@ -470,23 +527,29 @@ def call_loops_all_conditions(mcool_files, conditions, chromosomes,
     
     return all_loops
 
-def compare_loops_to_null(loop_data, null_model, fdr_threshold=0.05):
+def compare_loops_to_null(loop_data, null_model, conditions, fdr_threshold=0.05):
     """
     Compare loop calls between conditions and test for significance.
     """
     print("\nComparing loops between conditions...")
     
-    if 'DOX' not in loop_data:
-        print("Warning: DOX condition not found in loop data")
+    # Find reference condition
+    ref_condition = None
+    for cond in ['DOX', 'uninfected']:
+        if cond in loop_data:
+            ref_condition = cond
+            break
+    
+    if ref_condition is None:
+        print("Warning: No reference condition found in loop data")
         print(f"Available conditions: {list(loop_data.keys())}")
         return pd.DataFrame()
     
-    uninfected_loops = loop_data['DOX']
+    uninfected_loops = loop_data[ref_condition]
     comparison_results = []
     
-    for infected_condition in ['wMel', 'wRi', 'wWil']:
-        if infected_condition not in loop_data:
-            print(f"Warning: {infected_condition} not found in loop data")
+    for infected_condition in conditions:
+        if infected_condition == ref_condition or infected_condition not in loop_data:
             continue
             
         infected_loops = loop_data[infected_condition]
@@ -558,11 +621,12 @@ def compare_loops_to_null(loop_data, null_model, fdr_threshold=0.05):
             p_lost = 1.0
         
         # Apply multiple testing correction
-        fdr_gained = min(p_gained * 3, 1.0)  # Bonferroni for 3 comparisons
-        fdr_lost = min(p_lost * 3, 1.0)
+        n_comparisons = len(conditions) - 1
+        fdr_gained = min(p_gained * n_comparisons, 1.0)
+        fdr_lost = min(p_lost * n_comparisons, 1.0)
         
         comparison_results.append({
-            'comparison': f"DOX_vs_{infected_condition}",
+            'comparison': f"{ref_condition}_vs_{infected_condition}",
             'gained_loops': len(gained),
             'lost_loops': len(lost),
             'total_uninf_loops': len(uninf_set),
@@ -684,7 +748,17 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
     # Plot 6: Summary statistics
     ax = axes[1, 2]
     summary_data = []
-    for comp in ['DOX_vs_wMel', 'DOX_vs_wRi', 'DOX_vs_wWil']:
+    
+    # Get all unique comparisons
+    all_comparisons = set()
+    if not tad_comparison.empty and 'comparison' in tad_comparison.columns:
+        all_comparisons.update(tad_comparison['comparison'].unique())
+    if not compartment_comp.empty and 'comparison' in compartment_comp.columns:
+        all_comparisons.update(compartment_comp['comparison'].unique())
+    if not loop_comp.empty and 'comparison' in loop_comp.columns:
+        all_comparisons.update(loop_comp['comparison'].unique())
+    
+    for comp in all_comparisons:
         tad_sig = 0
         comp_sig = 0
         loop_count = 0
@@ -703,8 +777,11 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
         except Exception as e:
             print(f"Warning: Could not calculate summary for {comp}: {e}")
         
+        # Extract comparison name
+        comp_name = comp.replace('DOX_vs_', '').replace('uninfected_vs_', '')
+        
         summary_data.append({
-            'Comparison': comp.replace('DOX_vs_', ''),
+            'Comparison': comp_name,
             'TAD boundaries': tad_sig,
             'Compartments': comp_sig,
             'Loops': loop_count
@@ -726,10 +803,10 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
 
 def main():
     parser = argparse.ArgumentParser(description='Compare chromatin structure using existing diffHic results')
-    parser.add_argument('--mcool_files', nargs=4, required=True,
-                       help='Micro-C mcool files for DOX, wMel, wRi, wWil')
-    parser.add_argument('--conditions', nargs=4, default=['DOX', 'wMel', 'wRi', 'wWil'],
-                       help='Condition names')
+    parser.add_argument('--mcool_files', nargs='+', required=True,
+                       help='Micro-C mcool files (must match number of conditions)')
+    parser.add_argument('--conditions', nargs='+', required=True,
+                       help='Condition names (must match number of mcool files)')
     parser.add_argument('--diffhic_results', required=True,
                        help='Combined diffHic results file (all_results_combined.csv)')
     parser.add_argument('--null_model', required=True,
@@ -750,6 +827,11 @@ def main():
     
     args = parser.parse_args()
     
+    # Validation
+    if len(args.mcool_files) != len(args.conditions):
+        raise ValueError(f"Number of mcool files ({len(args.mcool_files)}) must match number of conditions ({len(args.conditions)})")
+    
+    print(f"Analyzing {len(args.conditions)} conditions: {', '.join(args.conditions)}")
     print(f"Using cooltools version: {cooltools.__version__}")
     
     # Load diffHic results and null model
@@ -762,7 +844,7 @@ def main():
     print("="*60)
     
     tad_boundaries = identify_tad_boundaries_from_interactions(
-        significant_results, window_size=args.tad_window_size
+        significant_results, args.conditions, window_size=args.tad_window_size
     )
     
     # Compare TAD boundaries between conditions
@@ -782,7 +864,7 @@ def main():
     
     # Compare compartments
     compartment_comparison = compare_compartments_to_null(
-        compartment_data, null_model, args.fdr_threshold
+        compartment_data, null_model, args.conditions, args.fdr_threshold
     )
     
     # Call loops using cooltools
@@ -796,7 +878,7 @@ def main():
     )
     
     # Compare loops
-    loop_comparison = compare_loops_to_null(loop_data, null_model, args.fdr_threshold)
+    loop_comparison = compare_loops_to_null(loop_data, null_model, args.conditions, args.fdr_threshold)
     
     # Create visualizations
     print("\n" + "="*60)
@@ -853,6 +935,7 @@ def main():
     with open(f"{args.output_prefix}_analysis_summary.txt", 'w') as f:
         f.write("CHROMATIN STRUCTURE ANALYSIS SUMMARY\n")
         f.write("="*50 + "\n\n")
+        f.write(f"Conditions analyzed: {', '.join(args.conditions)}\n\n")
         f.write(f"Total interactions analyzed: {summary_stats['total_interactions_analyzed']}\n")
         f.write(f"Significant differential interactions: {summary_stats['significant_interactions']}\n")
         f.write(f"TAD boundaries identified: {summary_stats['tad_boundaries_identified']}\n")
