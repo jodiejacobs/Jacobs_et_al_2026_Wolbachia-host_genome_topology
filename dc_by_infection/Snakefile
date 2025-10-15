@@ -269,6 +269,9 @@ rule x_chromosome_analysis:
     threads: 16
     shell:
         '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
         python scripts/x_chromosome_analysis.py \
             --has_sites {input.has_sites} \
             --mcool_files {input.mcool_files} \
