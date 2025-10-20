@@ -1,0 +1,10 @@
+H3K36me3 ChIP data from Kc cells
+
+# Install BEDOPS
+mamba install -c bioconda bedops
+
+# Convert GFF to BED
+gff2bed < your_file.gff > output.bed
+
+# Convert coordinates
+liftOver input.bed  ../liftover/dm3ToDm6.over.chain.gz output.bed unlifted.bed

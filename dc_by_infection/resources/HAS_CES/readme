@@ -1,3 +1,5 @@
+HAS binding sites for Drosophila Dosage Compensation Complex (DM2) 
+
 # Install liftOver if needed
 mamba install -c bioconda ucsc-liftover
 
