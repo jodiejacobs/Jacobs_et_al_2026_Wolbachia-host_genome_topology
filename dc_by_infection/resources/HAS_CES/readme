@@ -1,0 +1,12 @@
+# Install liftOver if needed
+mamba install -c bioconda ucsc-liftover
+
+# Download both chain files
+wget http://hgdownload.cse.ucsc.edu/goldenPath/dm2/liftOver/dm2ToDm3.over.chain.gz
+wget http://hgdownload.cse.ucsc.edu/goldenPath/dm3/liftOver/dm3ToDm6.over.chain.gz
+
+# Step 1: Convert dm2 to dm3
+liftOver input_dm2.bed dm2ToDm3.over.chain.gz intermediate_dm3.bed unlifted_dm2_to_dm3.bed
+
+# Step 2: Convert dm3 to dm6
+liftOver intermediate_dm3.bed dm3ToDm6.over.chain.gz output_dm6.bed unlifted_dm3_to_dm6.bed
