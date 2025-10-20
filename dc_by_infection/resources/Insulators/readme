@@ -1,0 +1,33 @@
+# Parse Class II insulators
+grep "^>" Insulator_Class_II.ME01.fasta | \
+awk -F'[; =:.]' '{
+    for(i=1; i<=NF; i++) {
+        if($i=="loc") {
+            chr=$(i+1); 
+            start=$(i+2)-1;  # Convert to 0-based
+            end=$(i+4);
+        }
+        if($i=="name") name=$(i+1);
+        if($i=="ID") id=$(i+1);
+    }
+    print chr"\t"start"\t"end"\t"name"\t.\t."
+}' > Insulator_Class_II_dm6.bed
+
+# Parse Class I insulators
+grep "^>" Insulator_Class_I.ME01.fasta | \
+awk -F'[; =:.]' '{
+    for(i=1; i<=NF; i++) {
+        if($i=="loc") {
+            chr=$(i+1); 
+            start=$(i+2)-1;  # Convert to 0-based
+            end=$(i+4);
+        }
+        if($i=="name") name=$(i+1);
+        if($i=="ID") id=$(i+1);
+    }
+    print chr"\t"start"\t"end"\t"name"\t.\t."
+}' > Insulator_Class_I_dm6.bed
+
+# Verify the output
+head Insulator_Class_II_dm6.bed
+wc -l Insulator_Class_I_dm6.bed Insulator_Class_II_dm6.bed
