@@ -36,3 +36,7 @@ dc_by_infection/.snakemake/
 *.bigwig
 *.bw
 network_analysis/
+
+# Claude Code documentation
+CLAUDE.md
+**/CLAUDE.md
