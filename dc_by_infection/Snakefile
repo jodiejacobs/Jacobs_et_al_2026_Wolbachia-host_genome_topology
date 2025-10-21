@@ -25,7 +25,10 @@ chip_dir = f"{ref_dir}/chip_peaks"
 enhancer_file = f"{ref_dir}/dm6_enhancers.bed"
 enhancer_classification = f"{ref_dir}/enhancer_classification.tsv"
 tss_file = f"{ref_dir}/dm6_tss.bed"
-has_sites_file = f"{ref_dir}/dm6_has_ces_sites.bed"
+insulator_class_i = f"resources/Insulators/Insulator_Class_I_dm6.bed"
+insulator_class_ii = f"resources/Insulators/Insulator_Class_II_dm6.bed"
+has_ces_sites = f"resources/HAS_CES/HAS_sites_dm6.journal.pgen.1000302.bed"
+h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6.bed"
 
 # Conda environments
 COOLER_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
@@ -147,8 +150,6 @@ rule diffhic_analysis:
         --fdr=0.05
         '''
 
-insulator_class_i = f"resources/Insulators/Insulator_Class_I_dm6.bed"
-insulator_class_ii = f"resources/Insulators/Insulator_Class_II_dm6.bed"
 
 # Insulator enrichment analysis with permutation testing
 rule insulator_contact_analysis:
@@ -222,8 +223,6 @@ rule check_ndf_interaction:
             > {output.summary}
         '''
 
-# At the top with other reference files, add:
-has_ces_sites = f"resources/HAS_CES/HAS_sites_dm6.journal.pgen.1000302.bed"
 
 # HAS/CES enrichment analysis at X chromosome contacts
 rule has_ces_contact_analysis:
@@ -258,8 +257,6 @@ rule has_ces_contact_analysis:
             --fdr_threshold {params.fdr_threshold} \
             --output_prefix {params.output_prefix}
         '''
-# At the top with other reference files, add:
-h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6.bed"
 
 # H3K36me3 enrichment analysis at X chromosome contacts
 rule h3k36me3_contact_analysis:
@@ -397,7 +394,7 @@ rule enhancer_class_analysis:
 # X chromosome regulation analysis with null model comparison
 rule x_chromosome_analysis:
     input:
-        has_sites = has_sites_file,
+        has_sites = has_ces_sites,
         mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
         interaction_file = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"
