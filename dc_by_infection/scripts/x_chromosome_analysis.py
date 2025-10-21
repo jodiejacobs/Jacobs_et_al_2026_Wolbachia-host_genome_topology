@@ -15,6 +15,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
+# Compatibility for different scipy versions
+try:
+    from scipy.stats import binomtest
+    def binom_test_compat(x, n, p, alternative):
+        return binomtest(x, n, p, alternative=alternative).pvalue
+except ImportError:
+    def binom_test_compat(x, n, p, alternative):
+        return stats.binom_test(x, n, p, alternative=alternative)
+
 def get_closest_resolution(mcool_file, target_resolution):
     """Get the closest available resolution in the mcool file."""
     try:
@@ -346,101 +355,239 @@ def analyze_has_proximity(has_sites, interaction_file, window_size=50000):
     
     return results
 
-def create_x_regulation_plots(has_results, compartment_results, interaction_results, has_proximity_results, output_prefix):
+def create_x_regulation_plots(has_results, compartment_results, interaction_results, 
+                             has_proximity_results, null_results, output_prefix):
     """
-    Create visualizations for X chromosome regulation analysis.
+    Create visualizations for X chromosome regulation analysis with statistical significance.
     """
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
-    # Plot 1: HAS contact frequencies
+    def add_significance_star(ax, x1, x2, y, p_value, height_offset=0.05):
+        """Add significance stars to plot"""
+        if p_value < 0.001:
+            sig_text = '***'
+        elif p_value < 0.01:
+            sig_text = '**'
+        elif p_value < 0.05:
+            sig_text = '*'
+        else:
+            sig_text = 'ns'
+        
+        # Draw bracket
+        y_max = ax.get_ylim()[1]
+        h = y + (y_max * height_offset)
+        ax.plot([x1, x1, x2, x2], [y, h, h, y], lw=1.5, c='black')
+        ax.text((x1 + x2) * 0.5, h, sig_text, ha='center', va='bottom', fontsize=10)
+    
+    # Plot 1: HAS contact frequencies with statistical test
     ax = axes[0, 0]
-    if has_results:
+    if has_results and len(has_results) >= 2:
         conditions = list(has_results.keys())
         avg_contacts = []
+        contact_data = []
         
         for condition in conditions:
             df = has_results[condition]
             if len(df) > 0 and 'avg_contacts' in df.columns:
-                avg_val = df['avg_contacts'].mean()
+                contacts = df['avg_contacts'].dropna()
+                contact_data.append(contacts)
+                avg_val = contacts.mean()
                 avg_contacts.append(avg_val if not np.isnan(avg_val) else 0)
             else:
                 avg_contacts.append(0)
+                contact_data.append(np.array([]))
         
-        ax.bar(conditions, avg_contacts)
+        bars = ax.bar(conditions, avg_contacts)
         ax.set_ylabel('Average Contact Frequency')
         ax.set_title('Contacts at HAS/CES Sites')
         ax.tick_params(axis='x', rotation=45)
+        
+        # Statistical test if we have 2 conditions with data
+        if len(contact_data) == 2 and len(contact_data[0]) > 0 and len(contact_data[1]) > 0:
+            try:
+                stat, p_value = stats.mannwhitneyu(contact_data[0], contact_data[1], alternative='two-sided')
+                add_significance_star(ax, 0, 1, max(avg_contacts), p_value)
+                print(f"HAS contacts (DOX vs wMel): Mann-Whitney U p = {p_value:.4e}")
+            except Exception as e:
+                print(f"Could not perform statistical test for HAS contacts: {e}")
     
-    # Plot 2: Compartment strength
+    # Plot 2: Compartment strength with statistical test
     ax = axes[0, 1]
-    if compartment_results:
+    if compartment_results and len(compartment_results) >= 2:
         conditions = list(compartment_results.keys())
         strengths = [result['compartment_strength'] for result in compartment_results.values()]
         
-        ax.bar(conditions, strengths)
-        ax.set_ylabel('Compartment Strength')
+        bars = ax.bar(conditions, strengths)
+        ax.set_ylabel('Compartment Strength (SD)')
         ax.set_title('X Chromosome Compartmentalization')
         ax.tick_params(axis='x', rotation=45)
+        
+        # Show the difference
+        if len(strengths) == 2:
+            diff_pct = (strengths[1] - strengths[0]) / strengths[0] * 100
+            ax.text(0.5, max(strengths) * 0.95, f'Δ = {diff_pct:+.1f}%', 
+                   ha='center', va='top', fontsize=9, transform=ax.transData)
     
-    # Plot 3: A/B compartment distribution
+    # Plot 3: A/B compartment distribution with chi-square test
     ax = axes[0, 2]
-    if compartment_results:
+    if compartment_results and len(compartment_results) >= 2:
         conditions = list(compartment_results.keys())
         percent_a = [result['percent_a'] for result in compartment_results.values()]
         percent_b = [result['percent_b'] for result in compartment_results.values()]
         
-        x = np.arange(len(conditions))
+        x_pos = np.arange(len(conditions))
         width = 0.35
         
-        ax.bar(x - width/2, percent_a, width, label='A compartment')
-        ax.bar(x + width/2, percent_b, width, label='B compartment')
+        ax.bar(x_pos - width/2, percent_a, width, label='A compartment', color='#e74c3c')
+        ax.bar(x_pos + width/2, percent_b, width, label='B compartment', color='#3498db')
         
         ax.set_ylabel('Percentage')
         ax.set_title('A/B Compartment Distribution')
-        ax.set_xticks(x)
+        ax.set_xticks(x_pos)
         ax.set_xticklabels(conditions, rotation=45)
         ax.legend()
+        
+        # Chi-square test if we have 2 conditions
+        if len(conditions) == 2:
+            try:
+                # Calculate counts
+                size1 = compartment_results[conditions[0]]['matrix_size']
+                size2 = compartment_results[conditions[1]]['matrix_size']
+                
+                obs_a1 = int(percent_a[0] / 100 * size1)
+                obs_b1 = int(percent_b[0] / 100 * size1)
+                obs_a2 = int(percent_a[1] / 100 * size2)
+                obs_b2 = int(percent_b[1] / 100 * size2)
+                
+                contingency = np.array([[obs_a1, obs_b1], [obs_a2, obs_b2]])
+                chi2, p_value, dof, expected = stats.chi2_contingency(contingency)
+                
+                # Add p-value to plot
+                ax.text(0.95, 0.95, f'χ² p = {p_value:.4e}', 
+                       transform=ax.transAxes, ha='right', va='top', 
+                       fontsize=9, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                print(f"Compartment distribution (DOX vs wMel): χ² p = {p_value:.4e}")
+            except Exception as e:
+                print(f"Could not perform chi-square test: {e}")
     
-    # Plot 4: Differential interactions on X
+    # Plot 4: X chromosome enrichment with hypergeometric test
     ax = axes[1, 0]
     if interaction_results:
-        cis_count = interaction_results['n_cis']
-        trans_count = interaction_results['n_trans']
+        # Calculate X chromosome enrichment
+        total_sig = interaction_results.get('n_total_sig', 0)
+        x_total = interaction_results['n_cis'] + interaction_results['n_trans']
         
-        ax.bar(['Cis', 'Trans'], [cis_count, trans_count])
+        # For Drosophila, X is ~20% of genome
+        # Assuming equal probability, we'd expect 20% of interactions to involve X
+        x_expected = total_sig * 0.20
+        
+        bars = ax.bar(['X-interactions\n(Observed)', 'X-interactions\n(Expected 20%)'], 
+                     [x_total, x_expected], color=['#9b59b6', '#bdc3c7'])
         ax.set_ylabel('Number of Interactions')
-        ax.set_title('Differential X Chromosome Interactions')
+        ax.set_title('X Chromosome Interaction Enrichment')
+        
+        # Binomial test for enrichment
+        try:
+            # Test if proportion of X interactions differs from 20%
+            p_value = binom_test_compat(x_total, n=total_sig, p=0.20, alternative='two-sided')
+            enrichment = (x_total / total_sig) / 0.20 if total_sig > 0 else 0
+            
+            sig_marker = ''
+            if p_value < 0.001:
+                sig_marker = '***'
+            elif p_value < 0.01:
+                sig_marker = '**'
+            elif p_value < 0.05:
+                sig_marker = '*'
+            
+            ax.text(0.95, 0.95, f'Enrichment: {enrichment:.2f}×\np = {p_value:.4e} {sig_marker}', 
+                   transform=ax.transAxes, ha='right', va='top', 
+                   fontsize=9, bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
+            print(f"X chromosome enrichment: {enrichment:.2f}× (p = {p_value:.4e})")
+        except Exception as e:
+            print(f"Could not test X enrichment: {e}")
     
-    # Plot 5: Direction of change
+    # Plot 5: X-trans directionality test
     ax = axes[1, 1]
-    if interaction_results:
-        up_cis = interaction_results['upregulated_cis']
-        down_cis = interaction_results['downregulated_cis']
+    if interaction_results and interaction_results['n_trans'] > 0:
         up_trans = interaction_results['upregulated_trans']
         down_trans = interaction_results['downregulated_trans']
         
-        x = np.arange(2)
-        width = 0.35
+        bars = ax.bar(['Upregulated', 'Downregulated'], [up_trans, down_trans], 
+                     color=['#e74c3c', '#3498db'])
         
-        ax.bar(x - width/2, [up_cis, up_trans], width, label='Upregulated', color='red')
-        ax.bar(x + width/2, [down_cis, down_trans], width, label='Downregulated', color='blue')
+        ax.set_ylabel('Number of X-trans Interactions')
+        ax.set_title('X-trans Directionality')
         
-        ax.set_ylabel('Number of Interactions')
-        ax.set_title('Direction of X Chromosome Changes')
-        ax.set_xticks(x)
-        ax.set_xticklabels(['Cis', 'Trans'])
-        ax.legend()
+        # Binomial test for directional bias (null = 50/50)
+        total = up_trans + down_trans
+        if total > 0:
+            try:
+                p_value = binom_test_compat(up_trans, n=total, p=0.5, alternative='two-sided')
+                proportion_up = up_trans / total
+                
+                sig_marker = ''
+                if p_value < 0.001:
+                    sig_marker = '***'
+                elif p_value < 0.01:
+                    sig_marker = '**'
+                elif p_value < 0.05:
+                    sig_marker = '*'
+                else:
+                    sig_marker = 'ns'
+                
+                ax.text(0.5, max(up_trans, down_trans) * 1.05, sig_marker, 
+                       ha='center', va='bottom', fontsize=14, fontweight='bold')
+                
+                ax.text(0.95, 0.95, f'Binomial p = {p_value:.4e}\n{up_trans}/{total} up ({proportion_up*100:.1f}%)', 
+                       transform=ax.transAxes, ha='right', va='top', 
+                       fontsize=9, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                print(f"X-trans directionality: {proportion_up*100:.1f}% up (binomial p = {p_value:.4e})")
+            except Exception as e:
+                print(f"Could not test X-trans directionality: {e}")
     
-    # Plot 6: HAS proximity interactions
+    # Plot 6: HAS proximity enrichment
     ax = axes[1, 2]
-    if has_proximity_results:
-        up_has = has_proximity_results['has_proximal_upregulated']
-        down_has = has_proximity_results['has_proximal_downregulated']
+    if has_proximity_results and interaction_results:
+        n_has_proximal = has_proximity_results['n_has_proximal']
+        total_sig = interaction_results.get('n_total_sig', 0)
         
-        ax.bar(['Upregulated', 'Downregulated'], [up_has, down_has], 
-               color=['red', 'blue'])
+        # Expected: if HAS windows cover ~0.3% of X chromosome (3 sites * 100kb windows / 23Mb X)
+        # and X-trans is 10348 interactions, expected near HAS = ~31
+        x_trans = interaction_results['n_trans']
+        has_window_size = 100000  # 50kb each side
+        x_chrom_size = 23542271  # dm6 X chromosome size
+        has_coverage = (3 * has_window_size) / x_chrom_size
+        expected_has = x_trans * has_coverage * 2  # *2 because either anchor could be near HAS
+        
+        bars = ax.bar(['HAS-proximal\n(Observed)', 'Random\n(Expected)'], 
+                     [n_has_proximal, expected_has], color=['#2ecc71', '#bdc3c7'])
         ax.set_ylabel('Number of Interactions')
-        ax.set_title('HAS-Proximal Interactions')
+        ax.set_title('HAS Proximity Enrichment')
+        
+        # Poisson test for enrichment
+        try:
+            from scipy.stats import poisson
+            # P-value for observing >= n_has_proximal given expected
+            p_value = 1 - poisson.cdf(n_has_proximal - 1, expected_has)
+            enrichment = n_has_proximal / expected_has if expected_has > 0 else 0
+            
+            sig_marker = ''
+            if p_value < 0.001:
+                sig_marker = '***'
+            elif p_value < 0.01:
+                sig_marker = '**'
+            elif p_value < 0.05:
+                sig_marker = '*'
+            else:
+                sig_marker = 'ns'
+            
+            ax.text(0.95, 0.95, f'Enrichment: {enrichment:.2f}×\nPoisson p = {p_value:.4e} {sig_marker}', 
+                   transform=ax.transAxes, ha='right', va='top', 
+                   fontsize=9, bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+            print(f"HAS proximity enrichment: {enrichment:.2f}× (Poisson p = {p_value:.4e})")
+        except Exception as e:
+            print(f"Could not test HAS enrichment: {e}")
     
     plt.tight_layout()
     plt.savefig(f"{output_prefix}_analysis.pdf", dpi=300, bbox_inches='tight')
@@ -459,6 +606,11 @@ def main():
     parser.add_argument('--output_prefix', required=True, help='Output file prefix')
     
     args = parser.parse_args()
+    
+    # Create output directory if it doesn't exist
+    output_dir = Path(args.output_prefix).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Output directory: {output_dir}")
     
     # Validate inputs
     if len(args.mcool_files) != len(args.conditions):
@@ -500,7 +652,7 @@ def main():
     # Create visualizations
     create_x_regulation_plots(
         has_results, compartment_results, interaction_results, 
-        has_proximity_results, args.output_prefix
+        has_proximity_results, interaction_results_null, args.output_prefix
     )
     
     # Save summary statistics
@@ -668,6 +820,139 @@ def main():
         if interaction_results:
             enrichment = interaction_results['n_total_sig'] / interaction_results_null['n_sig'] if interaction_results_null['n_sig'] > 0 else np.nan
             print(f"  Enrichment over null: {enrichment:.2f}x")
+    
+    # Save statistical test results
+    print("\nSaving statistical test results...")
+    stat_results = []
+    
+    # HAS contact comparison (DOX vs wMel)
+    if has_results and len(has_results) == 2:
+        conditions = list(has_results.keys())
+        contact_data = []
+        for condition in conditions:
+            df = has_results[condition]
+            if len(df) > 0 and 'avg_contacts' in df.columns:
+                contact_data.append(df['avg_contacts'].dropna())
+        
+        if len(contact_data) == 2 and len(contact_data[0]) > 0 and len(contact_data[1]) > 0:
+            try:
+                stat, p_value = stats.mannwhitneyu(contact_data[0], contact_data[1], alternative='two-sided')
+                stat_results.append({
+                    'test': 'HAS contact frequency',
+                    'method': 'Mann-Whitney U',
+                    'statistic': stat,
+                    'p_value': p_value,
+                    'significant': p_value < 0.05,
+                    'comparison': f'{conditions[0]} vs {conditions[1]}'
+                })
+            except:
+                pass
+    
+    # Compartment distribution comparison (DOX vs wMel)
+    if compartment_results and len(compartment_results) == 2:
+        conditions = list(compartment_results.keys())
+        try:
+            size1 = compartment_results[conditions[0]]['matrix_size']
+            size2 = compartment_results[conditions[1]]['matrix_size']
+            percent_a = [result['percent_a'] for result in compartment_results.values()]
+            percent_b = [result['percent_b'] for result in compartment_results.values()]
+            
+            obs_a1 = int(percent_a[0] / 100 * size1)
+            obs_b1 = int(percent_b[0] / 100 * size1)
+            obs_a2 = int(percent_a[1] / 100 * size2)
+            obs_b2 = int(percent_b[1] / 100 * size2)
+            
+            contingency = np.array([[obs_a1, obs_b1], [obs_a2, obs_b2]])
+            chi2, p_value, dof, expected = stats.chi2_contingency(contingency)
+            
+            stat_results.append({
+                'test': 'A/B compartment distribution',
+                'method': 'Chi-square',
+                'statistic': chi2,
+                'p_value': p_value,
+                'significant': p_value < 0.05,
+                'comparison': f'{conditions[0]} vs {conditions[1]}'
+            })
+        except:
+            pass
+    
+    # X chromosome enrichment test
+    if interaction_results:
+        total_sig = interaction_results.get('n_total_sig', 0)
+        x_total = interaction_results['n_cis'] + interaction_results['n_trans']
+        
+        if total_sig > 0:
+            try:
+                # Test if proportion of X interactions differs from 20% (genome proportion)
+                p_value = binom_test_compat(x_total, n=total_sig, p=0.20, alternative='two-sided')
+                enrichment = (x_total / total_sig) / 0.20
+                
+                stat_results.append({
+                    'test': 'X chromosome enrichment',
+                    'method': 'Binomial test',
+                    'statistic': enrichment,
+                    'p_value': p_value,
+                    'significant': p_value < 0.05,
+                    'comparison': f'Observed {x_total}/{total_sig} vs expected 20%'
+                })
+            except:
+                pass
+    
+    # X-trans directionality test
+    if interaction_results:
+        up_trans = interaction_results['upregulated_trans']
+        down_trans = interaction_results['downregulated_trans']
+        total = up_trans + down_trans
+        
+        if total > 0:
+            try:
+                p_value = binom_test_compat(up_trans, n=total, p=0.5, alternative='two-sided')
+                proportion_up = up_trans / total
+                
+                stat_results.append({
+                    'test': 'X-trans directionality',
+                    'method': 'Binomial test',
+                    'statistic': proportion_up,
+                    'p_value': p_value,
+                    'significant': p_value < 0.05,
+                    'comparison': f'{up_trans}/{total} upregulated vs 50% expected'
+                })
+            except:
+                pass
+    
+    # HAS proximity enrichment test
+    if has_proximity_results and interaction_results:
+        n_has_proximal = has_proximity_results['n_has_proximal']
+        x_trans = interaction_results['n_trans']
+        
+        # Calculate expected based on genomic coverage
+        has_window_size = 100000  # 50kb each side
+        x_chrom_size = 23542271  # dm6 X chromosome size
+        has_coverage = (3 * has_window_size) / x_chrom_size
+        expected_has = x_trans * has_coverage * 2  # *2 because either anchor could be near HAS
+        
+        if expected_has > 0:
+            try:
+                from scipy.stats import poisson
+                # P-value for observing >= n_has_proximal given expected
+                p_value = 1 - poisson.cdf(n_has_proximal - 1, expected_has)
+                enrichment = n_has_proximal / expected_has
+                
+                stat_results.append({
+                    'test': 'HAS proximity enrichment',
+                    'method': 'Poisson test',
+                    'statistic': enrichment,
+                    'p_value': p_value,
+                    'significant': p_value < 0.05,
+                    'comparison': f'Observed {n_has_proximal} vs expected {expected_has:.1f}'
+                })
+            except:
+                pass
+    
+    if stat_results:
+        stat_df = pd.DataFrame(stat_results)
+        stat_df.to_csv(f"{args.output_prefix}_statistical_tests.tsv", sep='\t', index=False)
+        print(f"Statistical test results saved to {args.output_prefix}_statistical_tests.tsv")
 
 if __name__ == '__main__':
     main()

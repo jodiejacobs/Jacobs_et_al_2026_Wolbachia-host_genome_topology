@@ -52,6 +52,11 @@ rule all:
         # X chromosome analysis (with null comparisons)
         f"{output_dir}/x_analysis/x_chromosome_summary.tsv",
         # f"{output_dir}/x_analysis/x_regulation_null_comparison_stats.tsv",
+        f"{output_dir}/has_ces_analysis/has_summary.txt",
+        f"{output_dir}/insulator_analysis/insulator_summary.txt",
+        f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
+        f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
+
 
 # Contact extraction
 rule identify_contacts:
@@ -142,6 +147,152 @@ rule diffhic_analysis:
         --fdr=0.05
         '''
 
+insulator_class_i = f"resources/Insulators/Insulator_Class_I_dm6.bed"
+insulator_class_ii = f"resources/Insulators/Insulator_Class_II_dm6.bed"
+
+# Insulator enrichment analysis with permutation testing
+rule insulator_contact_analysis:
+    input:
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        class_i = insulator_class_i,
+        class_ii = insulator_class_ii,
+        genome = genome_file
+    output:
+        summary = f"{output_dir}/insulator_analysis/insulator_summary.txt",
+        interactions = f"{output_dir}/insulator_analysis/insulator_interactions.csv",
+        plot = f"{output_dir}/insulator_analysis/insulator_analysis.pdf",
+        summary_csv = f"{output_dir}/insulator_analysis/insulator_summary.csv"
+    params:
+        window_size = 10000,  # 10kb window for insulator effects
+        n_permutations = 1000,  # Number of permutations
+        fdr_threshold = 0.05,
+        output_prefix = f"{output_dir}/insulator_analysis/insulator"
+    resources:
+        mem_mb = 64000,
+        runtime = 180  # Permutation testing takes longer
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/insulator_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --class_i {input.class_i} \
+            --class_ii {input.class_ii} \
+            --genome {input.genome} \
+            --window_size {params.window_size} \
+            --n_permutations {params.n_permutations} \
+            --fdr_threshold {params.fdr_threshold} \
+            --output_prefix {params.output_prefix}
+        '''
+
+# Optional: Check specific interaction mentioned in your notes
+# Add this as a separate rule if you want to check the NDF interaction specifically
+rule check_ndf_interaction:
+    input:
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        class_i = insulator_class_i,
+        class_ii = insulator_class_ii,
+        genome = genome_file
+    output:
+        summary = f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
+    params:
+        window_size = 10000,
+        n_permutations = 1000,
+        output_prefix = f"{output_dir}/insulator_analysis/ndf_interaction"
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/insulator_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --class_i {input.class_i} \
+            --class_ii {input.class_ii} \
+            --genome {input.genome} \
+            --window_size {params.window_size} \
+            --n_permutations {params.n_permutations} \
+            --check_interaction 2L 10000000 10008000 X 22432000 22440000 \
+            --output_prefix {params.output_prefix} \
+            > {output.summary}
+        '''
+
+# At the top with other reference files, add:
+has_ces_sites = f"resources/HAS_CES/HAS_sites_dm6.journal.pgen.1000302.bed"
+
+# HAS/CES enrichment analysis at X chromosome contacts
+rule has_ces_contact_analysis:
+    input:
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        has_sites = has_ces_sites
+    output:
+        summary = f"{output_dir}/has_ces_analysis/has_summary.txt",
+        interactions = f"{output_dir}/has_ces_analysis/has_interactions.csv",
+        plot = f"{output_dir}/has_ces_analysis/has_analysis.pdf",
+        summary_csv = f"{output_dir}/has_ces_analysis/has_summary.csv",
+        distance_dist = f"{output_dir}/has_ces_analysis/distance_distribution.csv"
+    params:
+        window_size = 50000,  # 50kb window for MSL spreading
+        fdr_threshold = 0.05,
+        output_prefix = f"{output_dir}/has_ces_analysis/has"
+    resources:
+        mem_mb = 64000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/has_ces_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --has_sites {input.has_sites} \
+            --window_size {params.window_size} \
+            --fdr_threshold {params.fdr_threshold} \
+            --output_prefix {params.output_prefix}
+        '''
+# At the top with other reference files, add:
+h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6.bed"
+
+# H3K36me3 enrichment analysis at X chromosome contacts
+rule h3k36me3_contact_analysis:
+    input:
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        h3k36me3_peaks = h3k36me3_peaks
+    output:
+        summary = f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
+        interactions = f"{output_dir}/h3k36me3_analysis/h3k36me3_interactions.csv",
+        plot = f"{output_dir}/h3k36me3_analysis/h3k36me3_analysis.pdf",
+        summary_csv = f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.csv"
+    params:
+        window_size = 5000,  # Match your HAS analysis window
+        fdr_threshold = 0.05,
+        output_prefix = f"{output_dir}/h3k36me3_analysis/h3k36me3"
+    resources:
+        mem_mb = 64000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/h3k36me3_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --h3k36me3_peaks {input.h3k36me3_peaks} \
+            --window_size {params.window_size} \
+            --fdr_threshold {params.fdr_threshold} \
+            --output_prefix {params.output_prefix}
+        '''
 # Chromatin structure analysis using cooltools
 rule chromatin_structure_analysis:
     input:
