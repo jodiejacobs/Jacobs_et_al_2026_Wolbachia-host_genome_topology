@@ -752,7 +752,7 @@ def main():
     print("\n" + "="*80)
     print("ANALYSIS COMPLETE!")
     print("="*80)
-    print(f"\nResults written to: {args.output_prefix}_*")
+    print(f"\nResults written to: {args.output_prefix}*")
 
 
 if __name__ == '__main__':

@@ -54,11 +54,13 @@ rule all:
         
         # X chromosome analysis (with null comparisons)
         f"{output_dir}/x_analysis/x_chromosome_summary.tsv",
+        f"{output_dir}/X_diffhic/comprehensive_tables/all_sig_interactions_combined.csv",
         # f"{output_dir}/x_analysis/x_regulation_null_comparison_stats.tsv",
         f"{output_dir}/has_ces_analysis/has_summary.txt",
         f"{output_dir}/insulator_analysis/insulator_summary.txt",
         f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
         f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
+
 
 
 # Contact extraction
@@ -150,6 +152,62 @@ rule diffhic_analysis:
         --fdr=0.05
         '''
 
+rule filter_contacts_X:
+    input:
+        contacts = f"{output_dir}/sv_filtered/{{sample}}_filtered_contacts.csv"
+    output:
+        filtered = f"{output_dir}/sv_filtered_X/{{sample}}_X_filtered_contacts.csv"
+    params:
+        chromosome = "X"
+    resources: 
+        mem_mb=64000,
+        runtime=60
+    threads: 4 
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV} 
+
+        grep "X" {input.contacts} > {output.filtered}
+        '''
+
+rule X_chrom_diffhic_analysis:
+    input:
+        contacts = expand(f"{output_dir}/sv_filtered_X/{{sample}}_X_filtered_contacts.csv", sample=samples)
+    output:
+        # Per-resolution outputs
+        results = expand(f"{output_dir}/X_diffhic/res_{{resolution}}/differential_interactions.csv", 
+                        resolution=resolutions),
+        annotated = expand(f"{output_dir}/X_diffhic/res_{{resolution}}/annotated_differential_interactions.csv", 
+                          resolution=resolutions),
+        # Summary outputs (created by R script)
+        comprehensive_summary = f"{output_dir}/X_diffhic/summary/comprehensive_summary.txt",
+        resolution_summary = f"{output_dir}/X_diffhic/summary/resolution_summary.csv",
+        # Combined tables (created by R script)
+        combined_table = f"{output_dir}/X_diffhic/comprehensive_tables/all_sig_interactions_combined.csv",
+        # Volcano plots directory marker
+        volcano_plots = directory(f"{output_dir}/X_diffhic/volcano_plots"),
+        null_model = f"{output_dir}/X_diffhic/res_8000/null_model_results.csv"
+    params:
+        contacts_dir = f"{output_dir}/sv_filtered_X",  # Changed to point to filtered contacts
+        output_dir = f"{output_dir}/X_diffhic",
+        resolution = "8000"
+    resources: 
+        mem_mb=128000,
+        runtime=120
+    threads: 125 
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {R_DIFFHIC_ENV}
+        
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution_4.R \
+        --data_dir={params.contacts_dir} \
+        --output_dir={params.output_dir} \
+        --resolution={params.resolution} \
+        --threads={threads} \
+        --fdr=0.05
+        '''
 
 # Insulator enrichment analysis with permutation testing
 rule insulator_contact_analysis:
@@ -166,12 +224,12 @@ rule insulator_contact_analysis:
         summary_csv = f"{output_dir}/insulator_analysis/insulator_summary.csv"
     params:
         window_size = 10000,  # 10kb window for insulator effects
-        n_permutations = 1000,  # Number of permutations
+        n_permutations = 100,  # Number of permutations
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/insulator_analysis/insulator"
     resources:
         mem_mb = 64000,
-        runtime = 180  # Permutation testing takes longer
+        runtime = 720  # Permutation testing takes longer
     threads: 4
     shell:
         '''
@@ -201,9 +259,12 @@ rule check_ndf_interaction:
         genome = genome_file
     output:
         summary = f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
+    resources:
+        mem_mb = 64000,
+        runtime = 720  # Permutation testing takes longer
     params:
         window_size = 10000,
-        n_permutations = 1000,
+        n_permutations = 100,
         output_prefix = f"{output_dir}/insulator_analysis/ndf_interaction"
     shell:
         '''
@@ -239,7 +300,7 @@ rule has_ces_contact_analysis:
     params:
         window_size = 50000,  # 50kb window for MSL spreading
         fdr_threshold = 0.05,
-        output_prefix = f"{output_dir}/has_ces_analysis/has"
+        output_prefix = f"{output_dir}/has_ces_analysis/"
     resources:
         mem_mb = 64000,
         runtime = 120
@@ -272,7 +333,7 @@ rule h3k36me3_contact_analysis:
     params:
         window_size = 5000,  # Match your HAS analysis window
         fdr_threshold = 0.05,
-        output_prefix = f"{output_dir}/h3k36me3_analysis/h3k36me3"
+        output_prefix = f"{output_dir}/h3k36me3_analysis/"
     resources:
         mem_mb = 64000,
         runtime = 120

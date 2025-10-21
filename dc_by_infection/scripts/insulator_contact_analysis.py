@@ -583,10 +583,10 @@ def create_visualization(class_results, merged_df, perm_results, output_prefix):
         ax.axvline(10000, color='red', linestyle='--', alpha=0.5, label='10kb')
         ax.legend()
     
-    plt.savefig(f"{output_prefix}_insulator_analysis.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_prefix}/insulator_analysis.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"\nVisualization saved to {output_prefix}_insulator_analysis.pdf")
+    print(f"\nVisualization saved to {output_prefix}/insulator_analysis.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -664,7 +664,7 @@ def main():
         create_visualization(class_results, merged_df, perm_results, args.output_prefix)
         
         # Save results
-        merged_df.to_csv(f"{args.output_prefix}_insulator_interactions.csv", index=False)
+        merged_df.to_csv(f"{args.output_prefix}/insulator_interactions.csv", index=False)
         
         # Save summary
         summary = {
@@ -686,10 +686,10 @@ def main():
                 summary[f'{ins_class}_p_value'] = perm['p_value']
         
         summary_df = pd.DataFrame([summary])
-        summary_df.to_csv(f"{args.output_prefix}_insulator_summary.csv", index=False)
+        summary_df.to_csv(f"{args.output_prefix}/insulator_summary.csv", index=False)
         
         # Create text summary
-        with open(f"{args.output_prefix}_insulator_summary.txt", 'w') as f:
+        with open(f"{args.output_prefix}/insulator_summary.txt", 'w') as f:
             f.write("INSULATOR ENRICHMENT ANALYSIS SUMMARY\n")
             f.write("="*60 + "\n\n")
             
@@ -713,7 +713,7 @@ def main():
                     f.write(f"  P-value: {summary[f'{ins_class}_p_value']:.4f}\n")
                     f.write(f"  Significant: {'YES' if summary[f'{ins_class}_p_value'] < 0.05 else 'NO'}\n")
         
-        print(f"\nAnalysis complete! Results saved to {args.output_prefix}_*")
+        print(f"\nAnalysis complete! Results saved to {args.output_prefix}/*")
         
     return 0
 

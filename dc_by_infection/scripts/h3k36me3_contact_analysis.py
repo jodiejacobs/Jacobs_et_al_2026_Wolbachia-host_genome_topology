@@ -378,10 +378,10 @@ def create_visualization(merged_df, direction_results, output_prefix):
         ax.legend()
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}_h3k36me3_analysis.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_prefix}/h3k36me3_analysis.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Visualization saved to {output_prefix}_h3k36me3_analysis.pdf")
+    print(f"Visualization saved to {output_prefix}/h3k36me3_analysis.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -449,7 +449,7 @@ def main():
     create_visualization(merged_df, direction_results, args.output_prefix)
     
     # Save detailed results
-    merged_df.to_csv(f"{args.output_prefix}_h3k36me3_interactions.csv", index=False)
+    merged_df.to_csv(f"{args.output_prefix}/h3k36me3_interactions.csv", index=False)
     
     # Save summary statistics
     summary = {
@@ -467,10 +467,10 @@ def main():
     }
     
     summary_df = pd.DataFrame([summary])
-    summary_df.to_csv(f"{args.output_prefix}_h3k36me3_summary.csv", index=False)
+    summary_df.to_csv(f"{args.output_prefix}/h3k36me3_summary.csv", index=False)
     
     # Create text summary
-    with open(f"{args.output_prefix}_h3k36me3_summary.txt", 'w') as f:
+    with open(f"{args.output_prefix}/h3k36me3_summary.txt", 'w') as f:
         f.write("H3K36me3 ENRICHMENT ANALYSIS SUMMARY\n")
         f.write("="*60 + "\n\n")
         f.write(f"Analysis Parameters:\n")
@@ -499,7 +499,7 @@ def main():
         if summary['direction_comparison_pvalue'] is not None:
             f.write(f"  Direction comparison p-value: {summary['direction_comparison_pvalue']:.2e}\n")
     
-    print(f"\nAnalysis complete! Results saved to {args.output_prefix}_*")
+    print(f"\nAnalysis complete! Results saved to {args.output_prefix}/*")
     
     return 0
 

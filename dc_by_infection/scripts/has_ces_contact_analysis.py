@@ -530,10 +530,10 @@ def create_visualization(merged_df, direction_results, distance_analysis, null_c
                 ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}_has_analysis.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_prefix}/has_analysis.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"\nVisualization saved to {output_prefix}_has_analysis.pdf")
+    print(f"\nVisualization saved to {output_prefix}/has_analysis.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -607,7 +607,7 @@ def main():
     create_visualization(merged_df, direction_results, distance_analysis, null_comparison, args.output_prefix)
     
     # Save detailed results
-    merged_df.to_csv(f"{args.output_prefix}_has_interactions.csv", index=False)
+    merged_df.to_csv(f"{args.output_prefix}/has_interactions.csv", index=False)
     
     # Save summary statistics
     summary = {
@@ -631,16 +631,16 @@ def main():
     }
     
     summary_df = pd.DataFrame([summary])
-    summary_df.to_csv(f"{args.output_prefix}_has_summary.csv", index=False)
+    summary_df.to_csv(f"{args.output_prefix}/has_summary.csv", index=False)
     
     # Save distance distribution
     if distance_analysis is not None:
         distance_analysis['distance_distribution'].to_csv(
-            f"{args.output_prefix}_distance_distribution.csv", index=False
+            f"{args.output_prefix}/distance_distribution.csv", index=False
         )
     
     # Create text summary
-    with open(f"{args.output_prefix}_has_summary.txt", 'w') as f:
+    with open(f"{args.output_prefix}/has_summary.txt", 'w') as f:
         f.write("HAS/CES ENRICHMENT ANALYSIS SUMMARY\n")
         f.write("="*60 + "\n\n")
         
@@ -703,7 +703,7 @@ def main():
             f.write("near HAS sites. Changes may be independent of dosage compensation\n")
             f.write("entry sites, possibly affecting MSL spreading regions instead.\n")
     
-    print(f"\nAnalysis complete! Results saved to {args.output_prefix}_*")
+    print(f"\nAnalysis complete! Results saved to {args.output_prefix}/*")
     
     return 0
 
