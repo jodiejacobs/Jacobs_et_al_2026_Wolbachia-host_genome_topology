@@ -44,10 +44,10 @@ rule all:
         f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
         
         # Chromatin structure analysis
-        f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv", 
+        # f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv", 
         
         # Architectural protein enrichment
-        f"{output_dir}/enrichment/architectural_strain_plots.pdf",
+        # f"{output_dir}/enrichment/architectural_strain_plots.pdf",
         
         # Enhancer class analysis
         f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
@@ -168,7 +168,7 @@ rule filter_contacts_X:
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
         conda activate {PYTHON_ENV} 
 
-        grep "X" {input.contacts} > {output.filtered}
+        awk -F, 'NR==1 || $1=="X" || $4=="X"' {input.contacts} > {output.filtered}
         '''
 
 rule X_chrom_diffhic_analysis:
@@ -191,7 +191,7 @@ rule X_chrom_diffhic_analysis:
     params:
         contacts_dir = f"{output_dir}/sv_filtered_X",  # Changed to point to filtered contacts
         output_dir = f"{output_dir}/X_diffhic",
-        resolution = "8000"
+        resolution = "1000,8000,32000,128000" 
     resources: 
         mem_mb=128000,
         runtime=120
