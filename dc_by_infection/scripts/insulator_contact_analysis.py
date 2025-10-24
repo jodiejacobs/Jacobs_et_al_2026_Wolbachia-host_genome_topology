@@ -4,6 +4,7 @@ Analyze insulator protein enrichment at differential chromatin contacts.
 Uses permutation testing to assess statistical significance.
 
 OPTIMIZED VERSION - Uses vectorized BedTools operations instead of per-interaction loops
+FIXED VERSION - Properly sorts BED data before bedtools operations
 
 Insulators tested:
 - Class I (CTCF-dependent)
@@ -132,6 +133,8 @@ def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10
     """
     OPTIMIZED: Calculate overlap between interaction anchors and insulator sites.
     Uses vectorized BedTools operations instead of per-interaction loops.
+    
+    FIXED: Properly sorts all BED data before bedtools operations to avoid sorting errors.
     """
     print(f"\nAnalyzing insulator overlap (window size: {window_size}bp)")
     
@@ -143,6 +146,9 @@ def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10
     insulators_extended = insulator_sites.copy()
     insulators_extended['start'] = (insulators_extended['start'] - window_size).clip(lower=0)
     insulators_extended['end'] = insulators_extended['end'] + window_size
+    
+    # CRITICAL FIX: Sort before creating BedTool
+    insulators_extended = insulators_extended.sort_values(['chrom', 'start', 'end'])
     
     insulator_bt = pybedtools.BedTool.from_dataframe(
         insulators_extended[['chrom', 'start', 'end']]
@@ -156,6 +162,10 @@ def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10
     anchor2_df = interactions_df[['chr2', 'start2', 'end2']].copy()
     anchor2_df.columns = ['chrom', 'start', 'end']
     anchor2_df['idx'] = interactions_df.index
+    
+    # CRITICAL FIX: Sort anchor dataframes before creating BedTool objects
+    anchor1_df = anchor1_df.sort_values(['chrom', 'start', 'end'])
+    anchor2_df = anchor2_df.sort_values(['chrom', 'start', 'end'])
     
     anchor1_bt = pybedtools.BedTool.from_dataframe(anchor1_df)
     anchor2_bt = pybedtools.BedTool.from_dataframe(anchor2_df)
@@ -178,8 +188,10 @@ def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10
     
     # OPTIMIZATION 3: Use BedTools closest operation for distances
     # This is MUCH faster than manual distance calculation
+    # CRITICAL FIX: Sort before creating BedTool
+    insulator_sites_sorted = insulator_sites.sort_values(['chrom', 'start', 'end'])
     insulator_base_bt = pybedtools.BedTool.from_dataframe(
-        insulator_sites[['chrom', 'start', 'end']]
+        insulator_sites_sorted[['chrom', 'start', 'end']]
     )
     
     anchor1_closest = anchor1_bt.closest(insulator_base_bt, d=True)
@@ -265,12 +277,18 @@ def permutation_test_enrichment(interactions_df, insulator_sites, genome_file,
     interactions_bed_df = pd.DataFrame(interaction_regions, columns=['chrom', 'start', 'end'])
     interactions_bed_df = interactions_bed_df.drop_duplicates()
     
+    # CRITICAL FIX: Sort before creating BedTool
+    interactions_bed_df = interactions_bed_df.sort_values(['chrom', 'start', 'end'])
+    
     interactions_bt = pybedtools.BedTool.from_dataframe(interactions_bed_df)
     
     # Extend insulator sites
     insulators_extended = insulator_sites.copy()
     insulators_extended['start'] = (insulators_extended['start'] - window_size).clip(lower=0)
     insulators_extended['end'] = insulators_extended['end'] + window_size
+    
+    # CRITICAL FIX: Sort before creating BedTool
+    insulators_extended = insulators_extended.sort_values(['chrom', 'start', 'end'])
     
     insulator_bt = pybedtools.BedTool.from_dataframe(
         insulators_extended[['chrom', 'start', 'end']]
