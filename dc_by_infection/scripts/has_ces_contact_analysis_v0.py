@@ -104,8 +104,8 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
     if len(sig_x) > 0:
         print(f"  Cis interactions: {sum(sig_x['chr1'] == sig_x['chr2'])}")
         print(f"  Trans interactions: {sum(sig_x['chr1'] != sig_x['chr2'])}")
-        print(f"  JW18 uninf. (up-regulated): {sum(sig_x['logFC'] > 0)}")
-        print(f"  JW18 wMel (down-regulated): {sum(sig_x['logFC'] < 0)}")
+        print(f"  Up-regulated: {sum(sig_x['logFC'] > 0)}")
+        print(f"  Down-regulated: {sum(sig_x['logFC'] < 0)}")
     
     return sig_x, x_interactions
 
@@ -323,7 +323,7 @@ def compare_to_null_model(real_overlap_rate, null_data, n_permutations=1000):
 
 def analyze_by_logfc_direction(interactions_df, overlap_df):
     """
-    Analyze HAS/CES enrichment separately for JW18 uninf. (up) and JW18 wMel (down) interactions.
+    Analyze HAS/CES enrichment separately for up and down-regulated interactions.
     """
     print("\nAnalyzing by logFC direction...")
     
@@ -334,45 +334,45 @@ def analyze_by_logfc_direction(interactions_df, overlap_df):
     merged['total_has'] = overlap_df['total_has'].values
     merged['min_dist_any'] = overlap_df['min_dist_any'].values
     
-    # Split by direction - JW18 uninf. (up) vs JW18 wMel (down)
-    jw18_uninf = merged[merged['logFC'] > 0]   # Up-regulated = JW18 uninf.
-    jw18_wmel = merged[merged['logFC'] < 0]    # Down-regulated = JW18 wMel
+    # Split by direction
+    up_regulated = merged[merged['logFC'] > 0]
+    down_regulated = merged[merged['logFC'] < 0]
     
     results = {
-        'jw18_uninf': {
-            'n_interactions': len(jw18_uninf),
-            'overlap_rate': jw18_uninf['any_anchor_overlap'].mean() if len(jw18_uninf) > 0 else 0,
-            'mean_has': jw18_uninf['total_has'].mean() if len(jw18_uninf) > 0 else 0,
-            'median_distance': jw18_uninf['min_dist_any'].median() if len(jw18_uninf) > 0 else np.inf
+        'up_regulated': {
+            'n_interactions': len(up_regulated),
+            'overlap_rate': up_regulated['any_anchor_overlap'].mean() if len(up_regulated) > 0 else 0,
+            'mean_has': up_regulated['total_has'].mean() if len(up_regulated) > 0 else 0,
+            'median_distance': up_regulated['min_dist_any'].median() if len(up_regulated) > 0 else np.inf
         },
-        'jw18_wmel': {
-            'n_interactions': len(jw18_wmel),
-            'overlap_rate': jw18_wmel['any_anchor_overlap'].mean() if len(jw18_wmel) > 0 else 0,
-            'mean_has': jw18_wmel['total_has'].mean() if len(jw18_wmel) > 0 else 0,
-            'median_distance': jw18_wmel['min_dist_any'].median() if len(jw18_wmel) > 0 else np.inf
+        'down_regulated': {
+            'n_interactions': len(down_regulated),
+            'overlap_rate': down_regulated['any_anchor_overlap'].mean() if len(down_regulated) > 0 else 0,
+            'mean_has': down_regulated['total_has'].mean() if len(down_regulated) > 0 else 0,
+            'median_distance': down_regulated['min_dist_any'].median() if len(down_regulated) > 0 else np.inf
         }
     }
     
     # Statistical test
-    if len(jw18_uninf) > 0 and len(jw18_wmel) > 0:
+    if len(up_regulated) > 0 and len(down_regulated) > 0:
         # Chi-square test for overlap rates
         contingency = np.array([
-            [jw18_uninf['any_anchor_overlap'].sum(), 
-             len(jw18_uninf) - jw18_uninf['any_anchor_overlap'].sum()],
-            [jw18_wmel['any_anchor_overlap'].sum(), 
-             len(jw18_wmel) - jw18_wmel['any_anchor_overlap'].sum()]
+            [up_regulated['any_anchor_overlap'].sum(), 
+             len(up_regulated) - up_regulated['any_anchor_overlap'].sum()],
+            [down_regulated['any_anchor_overlap'].sum(), 
+             len(down_regulated) - down_regulated['any_anchor_overlap'].sum()]
         ])
         
         chi2, p_value = stats.chi2_contingency(contingency)[:2]
         
         # Mann-Whitney U test for distances
-        uninf_dists = jw18_uninf['min_dist_any'].values
-        wmel_dists = jw18_wmel['min_dist_any'].values
-        uninf_dists = uninf_dists[~np.isinf(uninf_dists)]
-        wmel_dists = wmel_dists[~np.isinf(wmel_dists)]
+        up_dists = up_regulated['min_dist_any'].values
+        down_dists = down_regulated['min_dist_any'].values
+        up_dists = up_dists[~np.isinf(up_dists)]
+        down_dists = down_dists[~np.isinf(down_dists)]
         
-        if len(uninf_dists) > 0 and len(wmel_dists) > 0:
-            mw_stat, mw_pval = stats.mannwhitneyu(uninf_dists, wmel_dists, alternative='two-sided')
+        if len(up_dists) > 0 and len(down_dists) > 0:
+            mw_stat, mw_pval = stats.mannwhitneyu(up_dists, down_dists, alternative='two-sided')
         else:
             mw_stat, mw_pval = np.nan, 1.0
         
@@ -383,15 +383,15 @@ def analyze_by_logfc_direction(interactions_df, overlap_df):
             'mannwhitney_pvalue': mw_pval
         }
         
-        print(f"\nJW18 uninf. (up-regulated) interactions:")
-        print(f"  N = {results['jw18_uninf']['n_interactions']}")
-        print(f"  HAS overlap rate: {results['jw18_uninf']['overlap_rate']*100:.1f}%")
-        print(f"  Median distance: {results['jw18_uninf']['median_distance']:.0f} bp")
+        print(f"\nUp-regulated interactions:")
+        print(f"  N = {results['up_regulated']['n_interactions']}")
+        print(f"  HAS overlap rate: {results['up_regulated']['overlap_rate']*100:.1f}%")
+        print(f"  Median distance: {results['up_regulated']['median_distance']:.0f} bp")
         
-        print(f"\nJW18 wMel (down-regulated) interactions:")
-        print(f"  N = {results['jw18_wmel']['n_interactions']}")
-        print(f"  HAS overlap rate: {results['jw18_wmel']['overlap_rate']*100:.1f}%")
-        print(f"  Median distance: {results['jw18_wmel']['median_distance']:.0f} bp")
+        print(f"\nDown-regulated interactions:")
+        print(f"  N = {results['down_regulated']['n_interactions']}")
+        print(f"  HAS overlap rate: {results['down_regulated']['overlap_rate']*100:.1f}%")
+        print(f"  Median distance: {results['down_regulated']['median_distance']:.0f} bp")
         
         print(f"\nStatistical tests:")
         print(f"  Overlap rate difference (chi-square): p = {p_value:.2e}")
@@ -400,243 +400,140 @@ def analyze_by_logfc_direction(interactions_df, overlap_df):
     return results, merged
 
 def create_visualization(merged_df, direction_results, distance_analysis, null_comparison, output_prefix):
-    """Create separate 2x2 visualizations with updated labels and colors"""
-    print("\nCreating visualizations...")
+    """Create comprehensive visualization of HAS/CES enrichment analysis"""
     
-    # Define colors for JW18 uninf. and JW18 wMel
-    color_jw18_uninf = '#8fcb84'  # Light green for JW18 uninf. (upregulated)
-    color_jw18_wmel = '#09aa4b'   # Dark green for JW18 wMel (downregulated)
-    colors = [color_jw18_uninf, color_jw18_wmel]
-    
-    # Define labels
-    labels = ['JW18 uninf.', 'JW18 wMel']
-    
-    # Set global font size to minimum 6pt
-    plt.rcParams.update({'font.size': 6})
-    
-    # --- Plot Set 1: Enrichment and overlap rates (2x2) ---
-    fig, axes = plt.subplots(2, 2, figsize=(8, 8))
-    fig.patch.set_alpha(0)  # Transparent figure background
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
     # Plot 1: Observed vs Expected with significance
     ax = axes[0, 0]
-    ax.patch.set_alpha(0)
     categories = ['Observed', 'Expected\n(Null)']
     rates = [
         null_comparison['real_overlap_rate'] * 100,
         null_comparison['null_expectation'] * 100
     ]
     
-    bar_colors = ['#cc3333' if null_comparison['p_value'] < 0.05 else '#999999', '#cccccc']
-    bars = ax.bar(categories, rates, color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1)
-    ax.set_ylabel('HAS/CES Overlap Rate (%)', fontsize=6)
-    ax.set_title(f'Enrichment vs Null\n({null_comparison["enrichment"]:.2f}x)', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
+    colors = ['red' if null_comparison['p_value'] < 0.05 else 'gray', 'lightgray']
+    bars = ax.bar(categories, rates, color=colors, alpha=0.7, edgecolor='black', linewidth=2)
+    ax.set_ylabel('HAS/CES Overlap Rate (%)')
+    ax.set_title(f'Enrichment vs Null\n({null_comparison["enrichment"]:.2f}x, p={null_comparison["p_value"]:.2e})')
     
-    # Add p-value
-    p_val = null_comparison['p_value']
-    ax.text(0.5, max(rates) * 0.95, f'p = {p_val:.2e}', 
-            ha='center', va='top', fontsize=5,
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    # Add significance stars
+    if null_comparison['p_value'] < 0.001:
+        stars = '***'
+    elif null_comparison['p_value'] < 0.01:
+        stars = '**'
+    elif null_comparison['p_value'] < 0.05:
+        stars = '*'
+    else:
+        stars = 'ns'
+    
+    # Draw significance bracket
+    y_max = max(rates) * 1.15
+    ax.plot([0, 0, 1, 1], [y_max*0.95, y_max, y_max, y_max*0.95], 'k-', linewidth=1.5)
+    ax.text(0.5, y_max*1.02, stars, ha='center', va='bottom', fontsize=16, fontweight='bold')
     
     # Add values on bars
     for bar, val in zip(bars, rates):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height*0.5,
-                f'{val:.1f}%', ha='center', va='center', fontsize=5)
+                f'{val:.1f}%', ha='center', va='center', fontsize=11, fontweight='bold')
     
     # Plot 2: Direction-specific with null comparison
     ax = axes[0, 1]
-    ax.patch.set_alpha(0)
-    directions_all = ['JW18 uninf.', 'JW18 wMel', 'Expected\n(Null)']
+    directions_all = ['Up-regulated', 'Down-regulated', 'Expected\n(Null)']
     overlap_rates_dir = [
-        direction_results['jw18_uninf']['overlap_rate'] * 100,
-        direction_results['jw18_wmel']['overlap_rate'] * 100,
+        direction_results['up_regulated']['overlap_rate'] * 100,
+        direction_results['down_regulated']['overlap_rate'] * 100,
         null_comparison['null_expectation'] * 100
     ]
     
-    colors_dir = [color_jw18_uninf, color_jw18_wmel, '#cccccc']
-    bars = ax.bar(directions_all, overlap_rates_dir, color=colors_dir, alpha=0.8, edgecolor='black', linewidth=1)
-    ax.set_ylabel('HAS Overlap Rate (%)', fontsize=6)
-    ax.set_title('Genotype-Specific Enrichment', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
+    colors_dir = ['#d62728', '#2ca02c', 'lightgray']
+    bars = ax.bar(directions_all, overlap_rates_dir, color=colors_dir, alpha=0.7, edgecolor='black', linewidth=1.5)
+    ax.set_ylabel('HAS Overlap Rate (%)')
+    ax.set_title('Direction-Specific Enrichment')
     
     # Add significance if direction test exists
     if 'comparison' in direction_results and direction_results['comparison']:
         pval = direction_results['comparison'].get('chi2_pvalue', 1.0)
-        ax.text(0.5, max(overlap_rates_dir) * 0.95, f'p = {pval:.2e}', 
-                ha='center', va='top', fontsize=5,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-    
-    # Add values on bars
-    for bar, val in zip(bars, overlap_rates_dir):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-                f'{val:.1f}%', ha='center', va='bottom', fontsize=5)
+        if pval < 0.05:
+            y_max = max(overlap_rates_dir) * 1.15
+            ax.plot([0, 0, 1, 1], [y_max*0.95, y_max, y_max, y_max*0.95], 'k-', linewidth=1.5)
+            stars = '***' if pval < 0.001 else '**' if pval < 0.01 else '*'
+            ax.text(0.5, y_max*1.02, stars, ha='center', fontsize=14, fontweight='bold')
     
     # Plot 3: Distribution of HAS sites
+    ax = axes[0, 2]
+    up_has = merged_df[merged_df['logFC'] > 0]['total_has']
+    down_has = merged_df[merged_df['logFC'] < 0]['total_has']
+    
+    bins = np.arange(0, max(up_has.max(), down_has.max()) + 2)
+    ax.hist([up_has, down_has], bins=bins, label=['Up-regulated', 'Down-regulated'],
+            color=colors, alpha=0.6)
+    ax.set_xlabel('Number of HAS Sites')
+    ax.set_ylabel('Number of Interactions')
+    ax.set_title('Distribution of HAS Sites')
+    ax.legend()
+    
+    # Plot 4: LogFC vs distance to HAS
     ax = axes[1, 0]
-    ax.patch.set_alpha(0)
-    uninf_has = merged_df[merged_df['logFC'] > 0]['total_has']
-    wmel_has = merged_df[merged_df['logFC'] < 0]['total_has']
     
-    bins = np.arange(0, max(uninf_has.max(), wmel_has.max()) + 2)
-    ax.hist([uninf_has, wmel_has], bins=bins, label=labels,
-            color=colors, alpha=0.7)
-    ax.set_xlabel('Number of HAS Sites', fontsize=6)
-    ax.set_ylabel('Number of Interactions', fontsize=6)
-    ax.set_title('Distribution of HAS Sites', fontsize=7, fontweight='bold')
-    ax.legend(fontsize=5)
-    ax.tick_params(labelsize=6)
+    # Filter out infinite distances
+    plot_data = merged_df[~np.isinf(merged_df['min_dist_any'])].copy()
     
-    # Add Mann-Whitney U test
-    if len(uninf_has) > 0 and len(wmel_has) > 0:
-        u_stat, p_val = stats.mannwhitneyu(uninf_has, wmel_has, alternative='two-sided')
-        ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
-                transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    scatter = ax.scatter(plot_data['logFC'], plot_data['min_dist_any']/1000,
+                        c=plot_data['any_anchor_overlap'], cmap='RdYlGn',
+                        alpha=0.6)
+    ax.set_xlabel('log2 Fold Change')
+    ax.set_ylabel('Distance to Nearest HAS (kb)')
+    ax.set_title('Effect Size vs HAS Proximity')
+    ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
+    ax.set_yscale('log')
+    plt.colorbar(scatter, ax=ax, label='Overlaps HAS')
     
-    # Plot 4: Overlap type distribution
+    # Plot 5: Distance distribution
     ax = axes[1, 1]
-    ax.patch.set_alpha(0)
+    
+    if distance_analysis is not None:
+        dist_data = distance_analysis['distance_distribution']
+        ax.bar(range(len(dist_data)), dist_data['percentage'], 
+               color='steelblue', alpha=0.7)
+        ax.set_xticks(range(len(dist_data)))
+        ax.set_xticklabels(dist_data['distance_range'], rotation=45, ha='right')
+        ax.set_ylabel('Percentage of Interactions (%)')
+        ax.set_title('Distance to Nearest HAS')
+        
+        # Add median line
+        median_dist = distance_analysis['median_distance']
+        ax.axvline(x=1.5, color='red', linestyle='--', 
+                  label=f'Median: {median_dist/1000:.1f}kb')
+        ax.legend()
+    
+    # Plot 6: Overlap type distribution
+    ax = axes[1, 2]
     overlap_types = ['No overlap', 'One anchor', 'Both anchors']
     counts = [
         (~merged_df['any_anchor_overlap']).sum(),
         (merged_df['any_anchor_overlap'] & ~merged_df['both_anchors_overlap']).sum(),
         merged_df['both_anchors_overlap'].sum()
     ]
-    bars = ax.bar(overlap_types, counts, color=['#cccccc', '#ff9933', '#cc3333'], alpha=0.8)
-    ax.set_ylabel('Number of Interactions', fontsize=6)
-    ax.set_title('HAS Overlap Pattern', fontsize=7, fontweight='bold')
-    ax.tick_params(axis='x', rotation=45, labelsize=6)
-    ax.tick_params(axis='y', labelsize=6)
+    bars = ax.bar(overlap_types, counts, color=['gray', 'orange', 'red'], alpha=0.7)
+    ax.set_ylabel('Number of Interactions')
+    ax.set_title('HAS Overlap Pattern')
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
     
-    # Add values on bars
+    # Add percentages
     total = sum(counts)
     for bar, count in zip(bars, counts):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height,
                 f'{count}\n({count/total*100:.1f}%)',
-                ha='center', va='bottom', fontsize=5)
+                ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}/has_analysis_set1.pdf", 
-                dpi=300, bbox_inches='tight', transparent=True)
+    plt.savefig(f"{output_prefix}/has_analysis.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Plot set 1 saved to {output_prefix}/has_analysis_set1.pdf")
-    
-    # --- Plot Set 2: Distance and effect size analysis (2x2) ---
-    fig, axes = plt.subplots(2, 2, figsize=(8, 8))
-    fig.patch.set_alpha(0)
-    
-    # Plot 1: LogFC vs distance to HAS
-    ax = axes[0, 0]
-    ax.patch.set_alpha(0)
-    
-    # Filter out infinite distances
-    plot_data = merged_df[~np.isinf(merged_df['min_dist_any'])].copy()
-    
-    # Color points by genotype
-    uninf_mask = plot_data['logFC'] > 0
-    wmel_mask = plot_data['logFC'] < 0
-    
-    ax.scatter(plot_data[uninf_mask]['logFC'], plot_data[uninf_mask]['min_dist_any']/1000,
-               c=color_jw18_uninf, alpha=0.6, s=20, label='JW18 uninf.', edgecolors='none')
-    ax.scatter(plot_data[wmel_mask]['logFC'], plot_data[wmel_mask]['min_dist_any']/1000,
-               c=color_jw18_wmel, alpha=0.6, s=20, label='JW18 wMel', edgecolors='none')
-    
-    ax.set_xlabel('log2 Fold Change', fontsize=6)
-    ax.set_ylabel('Distance to Nearest HAS (kb)', fontsize=6)
-    ax.set_title('Effect Size vs HAS Proximity', fontsize=7, fontweight='bold')
-    ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
-    ax.set_yscale('log')
-    ax.legend(fontsize=5)
-    ax.tick_params(labelsize=6)
-    
-    # Add correlation statistics
-    corr, p_val = stats.spearmanr(plot_data['logFC'], plot_data['min_dist_any'])
-    ax.text(0.05, 0.95, f'ρ = {corr:.3f}\np = {p_val:.2e}', 
-            transform=ax.transAxes, ha='left', va='top', fontsize=5,
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-    
-    # Plot 2: Distance distribution
-    ax = axes[0, 1]
-    ax.patch.set_alpha(0)
-    
-    if distance_analysis is not None:
-        dist_data = distance_analysis['distance_distribution']
-        bars = ax.bar(range(len(dist_data)), dist_data['percentage'], 
-               color='steelblue', alpha=0.8)
-        ax.set_xticks(range(len(dist_data)))
-        ax.set_xticklabels(dist_data['distance_range'], rotation=45, ha='right', fontsize=6)
-        ax.set_ylabel('Percentage of Interactions (%)', fontsize=6)
-        ax.set_title('Distance to Nearest HAS', fontsize=7, fontweight='bold')
-        ax.tick_params(labelsize=6)
-        
-        # Add median line
-        median_dist = distance_analysis['median_distance']
-        ax.text(0.95, 0.95, f'Median: {median_dist/1000:.1f}kb', 
-                transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-        
-        # Add values on bars
-        for bar, val in zip(bars, dist_data['percentage']):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{val:.1f}%', ha='center', va='bottom', fontsize=5)
-    
-    # Plot 3: Median distance comparison by genotype
-    ax = axes[1, 0]
-    ax.patch.set_alpha(0)
-    
-    median_dists = [
-        direction_results['jw18_uninf']['median_distance'] / 1000,
-        direction_results['jw18_wmel']['median_distance'] / 1000
-    ]
-    bars = ax.bar(labels, median_dists, color=colors, alpha=0.8)
-    ax.set_ylabel('Median Distance to HAS (kb)', fontsize=6)
-    ax.set_title('HAS Proximity by Genotype', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
-    
-    # Add Mann-Whitney p-value
-    if 'comparison' in direction_results and 'mannwhitney_pvalue' in direction_results['comparison']:
-        mw_pval = direction_results['comparison']['mannwhitney_pvalue']
-        ax.text(0.5, max(median_dists) * 0.95, f'p = {mw_pval:.2e}', 
-                ha='center', va='top', fontsize=5,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-    
-    # Add values on bars
-    for bar, dist in zip(bars, median_dists):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-                f'{dist:.1f}kb', ha='center', va='bottom', fontsize=5)
-    
-    # Plot 4: Sample sizes
-    ax = axes[1, 1]
-    ax.patch.set_alpha(0)
-    
-    sample_sizes = [
-        direction_results['jw18_uninf']['n_interactions'],
-        direction_results['jw18_wmel']['n_interactions']
-    ]
-    bars = ax.bar(labels, sample_sizes, color=colors, alpha=0.8)
-    ax.set_ylabel('Number of Interactions', fontsize=6)
-    ax.set_title('Sample Sizes by Genotype', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
-    
-    # Add values on bars
-    for bar, size in zip(bars, sample_sizes):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-                f'n={size}', ha='center', va='bottom', fontsize=5)
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}/has_analysis_set2.pdf", 
-                dpi=300, bbox_inches='tight', transparent=True)
-    plt.close()
-    
-    print(f"Plot set 2 saved to {output_prefix}/has_analysis_set2.pdf")
+    print(f"\nVisualization saved to {output_prefix}/has_analysis.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -721,12 +618,12 @@ def main():
         'overall_overlap_rate': overall_overlap_rate,
         'enrichment_vs_null': null_comparison['enrichment'],
         'p_value': null_comparison['p_value'],
-        'jw18_uninf_n': direction_results['jw18_uninf']['n_interactions'],
-        'jw18_uninf_overlap_rate': direction_results['jw18_uninf']['overlap_rate'],
-        'jw18_uninf_median_distance': direction_results['jw18_uninf']['median_distance'],
-        'jw18_wmel_n': direction_results['jw18_wmel']['n_interactions'],
-        'jw18_wmel_overlap_rate': direction_results['jw18_wmel']['overlap_rate'],
-        'jw18_wmel_median_distance': direction_results['jw18_wmel']['median_distance'],
+        'up_regulated_n': direction_results['up_regulated']['n_interactions'],
+        'up_regulated_overlap_rate': direction_results['up_regulated']['overlap_rate'],
+        'up_regulated_median_distance': direction_results['up_regulated']['median_distance'],
+        'down_regulated_n': direction_results['down_regulated']['n_interactions'],
+        'down_regulated_overlap_rate': direction_results['down_regulated']['overlap_rate'],
+        'down_regulated_median_distance': direction_results['down_regulated']['median_distance'],
         'direction_overlap_pvalue': direction_results.get('comparison', {}).get('chi2_pvalue', None),
         'direction_distance_pvalue': direction_results.get('comparison', {}).get('mannwhitney_pvalue', None),
         'median_distance_to_has': distance_analysis['median_distance'] if distance_analysis else None,
@@ -769,15 +666,15 @@ def main():
             f.write(f"  Median distance to HAS: {summary['median_distance_to_has']/1000:.1f} kb\n")
             f.write(f"  Mean distance to HAS: {summary['mean_distance_to_has']/1000:.1f} kb\n\n")
         
-        f.write("Genotype-specific Analysis:\n")
-        f.write(f"  JW18 uninf. (up-regulated) interactions:\n")
-        f.write(f"    N = {summary['jw18_uninf_n']}\n")
-        f.write(f"    HAS overlap: {summary['jw18_uninf_overlap_rate']*100:.1f}%\n")
-        f.write(f"    Median distance: {summary['jw18_uninf_median_distance']/1000:.1f} kb\n")
-        f.write(f"  JW18 wMel (down-regulated) interactions:\n")
-        f.write(f"    N = {summary['jw18_wmel_n']}\n")
-        f.write(f"    HAS overlap: {summary['jw18_wmel_overlap_rate']*100:.1f}%\n")
-        f.write(f"    Median distance: {summary['jw18_wmel_median_distance']/1000:.1f} kb\n\n")
+        f.write("Direction-specific Analysis:\n")
+        f.write(f"  Up-regulated interactions:\n")
+        f.write(f"    N = {summary['up_regulated_n']}\n")
+        f.write(f"    HAS overlap: {summary['up_regulated_overlap_rate']*100:.1f}%\n")
+        f.write(f"    Median distance: {summary['up_regulated_median_distance']/1000:.1f} kb\n")
+        f.write(f"  Down-regulated interactions:\n")
+        f.write(f"    N = {summary['down_regulated_n']}\n")
+        f.write(f"    HAS overlap: {summary['down_regulated_overlap_rate']*100:.1f}%\n")
+        f.write(f"    Median distance: {summary['down_regulated_median_distance']/1000:.1f} kb\n\n")
         
         if summary['direction_overlap_pvalue'] is not None:
             f.write(f"  Statistical tests:\n")
@@ -792,11 +689,11 @@ def main():
             f.write("near HAS/CES sites, suggesting Wolbachia affects chromatin contacts\n")
             f.write("at dosage compensation entry sites.\n\n")
             
-            if summary['jw18_uninf_overlap_rate'] > summary['jw18_wmel_overlap_rate'] * 1.2:
-                f.write("JW18 uninf. bias: New contacts forming preferentially near HAS.\n")
+            if summary['up_regulated_overlap_rate'] > summary['down_regulated_overlap_rate'] * 1.2:
+                f.write("UP-REGULATED bias: New contacts forming preferentially near HAS.\n")
                 f.write("This could indicate enhanced MSL complex recruitment or spreading.\n")
-            elif summary['jw18_wmel_overlap_rate'] > summary['jw18_uninf_overlap_rate'] * 1.2:
-                f.write("JW18 wMel bias: Contacts lost preferentially near HAS.\n")
+            elif summary['down_regulated_overlap_rate'] > summary['up_regulated_overlap_rate'] * 1.2:
+                f.write("DOWN-REGULATED bias: Contacts lost preferentially near HAS.\n")
                 f.write("This could indicate disrupted MSL complex organization.\n")
         elif summary['enrichment_vs_null'] > 1.0 and summary['p_value'] < 0.05:
             f.write("MODERATE ENRICHMENT: Some enrichment detected near HAS sites.\n")
@@ -812,4 +709,3 @@ def main():
 
 if __name__ == '__main__':
     exit(main())
-    

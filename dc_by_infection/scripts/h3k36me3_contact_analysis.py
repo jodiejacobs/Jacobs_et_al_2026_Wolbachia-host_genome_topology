@@ -120,8 +120,8 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
     if len(sig_x) > 0:
         print(f"  Cis interactions: {sum(sig_x['chr1'] == sig_x['chr2'])}")
         print(f"  Trans interactions: {sum(sig_x['chr1'] != sig_x['chr2'])}")
-        print(f"  Up-regulated: {sum(sig_x['logFC'] > 0)}")
-        print(f"  Down-regulated: {sum(sig_x['logFC'] < 0)}")
+        print(f"  JW18 uninf. (up-regulated): {sum(sig_x['logFC'] > 0)}")
+        print(f"  JW18 wMel (down-regulated): {sum(sig_x['logFC'] < 0)}")
     
     return sig_x, x_interactions
 
@@ -193,195 +193,346 @@ def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000
                 'interaction_idx': idx,
                 'anchor1_overlap': anchor1_overlap,
                 'anchor2_overlap': anchor2_overlap,
-                'any_anchor_overlap': anchor1_overlap or anchor2_overlap,
                 'both_anchors_overlap': anchor1_overlap and anchor2_overlap,
+                'any_anchor_overlap': anchor1_overlap or anchor2_overlap,
                 'n_peaks_anchor1': n_peaks_anchor1,
                 'n_peaks_anchor2': n_peaks_anchor2,
                 'total_peaks': n_peaks_anchor1 + n_peaks_anchor2
             })
-            
         except Exception as e:
-            print(f"Warning: Could not process interaction {idx}: {e}")
-            continue
+            print(f"Error processing interaction {idx}: {e}")
+            results.append({
+                'interaction_idx': idx,
+                'anchor1_overlap': False,
+                'anchor2_overlap': False,
+                'both_anchors_overlap': False,
+                'any_anchor_overlap': False,
+                'n_peaks_anchor1': 0,
+                'n_peaks_anchor2': 0,
+                'total_peaks': 0
+            })
     
     results_df = pd.DataFrame(results)
     
-    # Calculate summary statistics
-    print(f"\nH3K36me3 Overlap Summary:")
-    print(f"  Interactions with any anchor overlap: {results_df['any_anchor_overlap'].sum()} ({results_df['any_anchor_overlap'].mean()*100:.1f}%)")
-    print(f"  Interactions with both anchors overlap: {results_df['both_anchors_overlap'].sum()} ({results_df['both_anchors_overlap'].mean()*100:.1f}%)")
+    print(f"\nOverall H3K36me3 overlap statistics:")
+    print(f"  Interactions with at least one anchor overlapping: {results_df['any_anchor_overlap'].sum()} ({results_df['any_anchor_overlap'].mean()*100:.1f}%)")
+    print(f"  Interactions with both anchors overlapping: {results_df['both_anchors_overlap'].sum()} ({results_df['both_anchors_overlap'].mean()*100:.1f}%)")
     print(f"  Mean H3K36me3 peaks per interaction: {results_df['total_peaks'].mean():.2f}")
     
     return results_df
 
-def compare_to_null_model(real_overlap_rate, null_data, n_permutations=1000):
-    """
-    Compare real H3K36me3 overlap rate to null expectation.
-    Since we don't have chromosome info in null model, use bootstrap approach.
-    """
-    print(f"\nComparing to null model...")
-    
-    # Calculate expected overlap rate from null model
-    # Assume genome-wide H3K36me3 coverage and X chromosome proportion
-    
-    # Simplified approach: use permutation test on the null model statistics
-    null_sample = null_data.sample(n=min(1000, len(null_data)), replace=True)
-    
-    # Calculate p-value
-    p_value = 1.0 - stats.norm.cdf(
-        real_overlap_rate,
-        loc=0.5,  # Baseline expectation
-        scale=np.sqrt(0.5 * 0.5 / len(null_sample))
-    )
-    
-    enrichment = real_overlap_rate / 0.5  # Compared to baseline
-    
-    return {
-        'enrichment': enrichment,
-        'p_value': p_value,
-        'real_overlap_rate': real_overlap_rate,
-        'null_expectation': 0.5
-    }
-
-def analyze_by_logfc_direction(interactions_df, overlap_df):
-    """
-    Analyze H3K36me3 enrichment separately for up and down-regulated interactions.
-    """
+def analyze_by_logfc_direction(interactions_df, overlap_results):
+    """Analyze H3K36me3 enrichment by logFC direction (JW18 uninf. vs JW18 wMel)"""
     print("\nAnalyzing by logFC direction...")
     
-    # Merge overlap results with interaction data
+    # Merge interactions with overlap results
     merged = interactions_df.copy()
-    merged['any_anchor_overlap'] = overlap_df['any_anchor_overlap'].values
-    merged['both_anchors_overlap'] = overlap_df['both_anchors_overlap'].values
-    merged['total_peaks'] = overlap_df['total_peaks'].values
+    merged['overlap_idx'] = range(len(merged))
+    merged = merged.merge(overlap_results, left_on='overlap_idx', right_on='interaction_idx', how='left')
     
-    # Split by direction
-    up_regulated = merged[merged['logFC'] > 0]
-    down_regulated = merged[merged['logFC'] < 0]
+    # Add interaction type
+    merged['interaction_type'] = np.where(merged['chr1'] == merged['chr2'], 'cis', 'trans')
     
+    # Split by direction - JW18 uninf. (positive logFC) vs JW18 wMel (negative logFC)
+    jw18_uninf = merged[merged['logFC'] > 0]  # Up-regulated = JW18 uninf.
+    jw18_wmel = merged[merged['logFC'] < 0]   # Down-regulated = JW18 wMel
+    
+    # Calculate statistics
     results = {
-        'up_regulated': {
-            'n_interactions': len(up_regulated),
-            'overlap_rate': up_regulated['any_anchor_overlap'].mean() if len(up_regulated) > 0 else 0,
-            'mean_peaks': up_regulated['total_peaks'].mean() if len(up_regulated) > 0 else 0
+        'jw18_uninf': {
+            'n_interactions': len(jw18_uninf),
+            'overlap_rate': jw18_uninf['any_anchor_overlap'].mean(),
+            'both_anchors_rate': jw18_uninf['both_anchors_overlap'].mean(),
+            'mean_peaks': jw18_uninf['total_peaks'].mean()
         },
-        'down_regulated': {
-            'n_interactions': len(down_regulated),
-            'overlap_rate': down_regulated['any_anchor_overlap'].mean() if len(down_regulated) > 0 else 0,
-            'mean_peaks': down_regulated['total_peaks'].mean() if len(down_regulated) > 0 else 0
+        'jw18_wmel': {
+            'n_interactions': len(jw18_wmel),
+            'overlap_rate': jw18_wmel['any_anchor_overlap'].mean(),
+            'both_anchors_rate': jw18_wmel['both_anchors_overlap'].mean(),
+            'mean_peaks': jw18_wmel['total_peaks'].mean()
         }
     }
     
-    # Statistical test
-    if len(up_regulated) > 0 and len(down_regulated) > 0:
-        # Chi-square test for overlap rates
-        contingency = np.array([
-            [up_regulated['any_anchor_overlap'].sum(), len(up_regulated) - up_regulated['any_anchor_overlap'].sum()],
-            [down_regulated['any_anchor_overlap'].sum(), len(down_regulated) - down_regulated['any_anchor_overlap'].sum()]
-        ])
-        
-        chi2, p_value = stats.chi2_contingency(contingency)[:2]
-        results['comparison'] = {
-            'chi2': chi2,
-            'p_value': p_value
-        }
-        
-        print(f"\nUp-regulated interactions:")
-        print(f"  N = {results['up_regulated']['n_interactions']}")
-        print(f"  H3K36me3 overlap rate: {results['up_regulated']['overlap_rate']*100:.1f}%")
-        
-        print(f"\nDown-regulated interactions:")
-        print(f"  N = {results['down_regulated']['n_interactions']}")
-        print(f"  H3K36me3 overlap rate: {results['down_regulated']['overlap_rate']*100:.1f}%")
-        
-        print(f"\nChi-square test p-value: {p_value:.2e}")
+    # Statistical comparison using Fisher's exact test
+    contingency = [
+        [jw18_uninf['any_anchor_overlap'].sum(), (~jw18_uninf['any_anchor_overlap']).sum()],
+        [jw18_wmel['any_anchor_overlap'].sum(), (~jw18_wmel['any_anchor_overlap']).sum()]
+    ]
+    
+    odds_ratio, p_value = stats.fisher_exact(contingency)
+    
+    results['comparison'] = {
+        'odds_ratio': odds_ratio,
+        'p_value': p_value
+    }
+    
+    print(f"\nDirection-specific results:")
+    print(f"JW18 uninf. (n={results['jw18_uninf']['n_interactions']}):")
+    print(f"  H3K36me3 overlap rate: {results['jw18_uninf']['overlap_rate']*100:.1f}%")
+    print(f"  Mean peaks: {results['jw18_uninf']['mean_peaks']:.2f}")
+    print(f"JW18 wMel (n={results['jw18_wmel']['n_interactions']}):")
+    print(f"  H3K36me3 overlap rate: {results['jw18_wmel']['overlap_rate']*100:.1f}%")
+    print(f"  Mean peaks: {results['jw18_wmel']['mean_peaks']:.2f}")
+    print(f"Fisher's exact test p-value: {p_value:.2e}")
     
     return results, merged
 
+def compare_to_null_model(real_overlap_rate, null_model):
+    """Compare real H3K36me3 enrichment to null model"""
+    print("\nComparing to null model...")
+    
+    # The null model doesn't have specific overlap rates, 
+    # so we'll use a baseline expectation
+    # For now, we'll assume 50% as a null expectation (random chance)
+    null_expectation = 0.5
+    
+    # Calculate enrichment
+    enrichment = real_overlap_rate / null_expectation
+    
+    # Calculate p-value using binomial test
+    # H0: overlap rate = null_expectation
+    n_interactions = len(null_model)
+    n_overlaps = int(real_overlap_rate * n_interactions)
+    
+    # Two-tailed binomial test
+    p_value = stats.binom_test(n_overlaps, n_interactions, null_expectation, alternative='two-sided')
+    
+    return {
+        'real_overlap_rate': real_overlap_rate,
+        'null_expectation': null_expectation,
+        'enrichment': enrichment,
+        'p_value': p_value
+    }
+
 def create_visualization(merged_df, direction_results, output_prefix):
-    """Create comprehensive visualization of H3K36me3 enrichment analysis"""
+    """Create separate 2x2 visualizations with updated labels and colors"""
+    print("\nCreating visualizations...")
     
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    # Define colors for JW18 uninf. and JW18 wMel
+    color_jw18_uninf = '#8fcb84'  # Light green for JW18 uninf. (upregulated)
+    color_jw18_wmel = '#09aa4b'   # Dark green for JW18 wMel (downregulated)
+    colors = [color_jw18_uninf, color_jw18_wmel]
     
-    # Plot 1: Overlap rate by direction
+    # Define labels
+    labels = ['JW18 uninf.', 'JW18 wMel']
+    
+    # Set global font size to minimum 6pt
+    plt.rcParams.update({'font.size': 6})
+    
+    # --- Plot Set 1: Overlap rates and peak counts (2x2) ---
+    fig, axes = plt.subplots(2, 2, figsize=(8, 8))
+    fig.patch.set_alpha(0)  # Transparent figure background
+    
+    # Plot 1: H3K36me3 Overlap Rate by Direction
     ax = axes[0, 0]
-    directions = ['Up-regulated', 'Down-regulated']
+    ax.patch.set_alpha(0)  # Transparent axis background
     overlap_rates = [
-        direction_results['up_regulated']['overlap_rate'] * 100,
-        direction_results['down_regulated']['overlap_rate'] * 100
+        direction_results['jw18_uninf']['overlap_rate'] * 100,
+        direction_results['jw18_wmel']['overlap_rate'] * 100
     ]
+    bars = ax.bar(labels, overlap_rates, color=colors, alpha=0.8)
+    ax.set_ylabel('H3K36me3 Overlap Rate (%)', fontsize=6)
+    ax.set_title('H3K36me3 Enrichment by Genotype', fontsize=7, fontweight='bold')
+    ax.axhline(y=50, color='gray', linestyle='--', linewidth=0.8, label='Expected (50%)')
+    ax.legend(fontsize=5)
+    ax.tick_params(labelsize=6)
     
-    colors = ['#d62728', '#2ca02c']  # Red for up, green for down
-    ax.bar(directions, overlap_rates, color=colors, alpha=0.7)
-    ax.set_ylabel('H3K36me3 Overlap Rate (%)')
-    ax.set_title('H3K36me3 Enrichment by Direction')
-    ax.axhline(y=50, color='gray', linestyle='--', label='Expected')
-    ax.legend()
+    # Add p-value if available
+    if 'comparison' in direction_results and 'p_value' in direction_results['comparison']:
+        p_val = direction_results['comparison']['p_value']
+        ax.text(0.5, max(overlap_rates) * 0.95, f'p = {p_val:.2e}', 
+                ha='center', va='top', fontsize=5, 
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
     
-    # Plot 2: Number of H3K36me3 peaks by direction
+    # Add value labels on bars
+    for bar, rate in zip(bars, overlap_rates):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{rate:.1f}%',
+                ha='center', va='bottom', fontsize=5)
+    
+    # Plot 2: Mean H3K36me3 Peaks per Interaction
     ax = axes[0, 1]
+    ax.patch.set_alpha(0)
     peak_counts = [
-        direction_results['up_regulated']['mean_peaks'],
-        direction_results['down_regulated']['mean_peaks']
+        direction_results['jw18_uninf']['mean_peaks'],
+        direction_results['jw18_wmel']['mean_peaks']
     ]
-    ax.bar(directions, peak_counts, color=colors, alpha=0.7)
-    ax.set_ylabel('Mean H3K36me3 Peaks per Interaction')
-    ax.set_title('H3K36me3 Peak Density')
+    bars = ax.bar(labels, peak_counts, color=colors, alpha=0.8)
+    ax.set_ylabel('Mean H3K36me3 Peaks per Interaction', fontsize=6)
+    ax.set_title('H3K36me3 Peak Density', fontsize=7, fontweight='bold')
+    ax.tick_params(labelsize=6)
+    
+    # Add value labels on bars
+    for bar, count in zip(bars, peak_counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{count:.2f}',
+                ha='center', va='bottom', fontsize=5)
     
     # Plot 3: Distribution of H3K36me3 peaks
-    ax = axes[0, 2]
-    up_peaks = merged_df[merged_df['logFC'] > 0]['total_peaks']
-    down_peaks = merged_df[merged_df['logFC'] < 0]['total_peaks']
-    
-    ax.hist([up_peaks, down_peaks], bins=20, label=['Up-regulated', 'Down-regulated'], 
-            color=colors, alpha=0.6)
-    ax.set_xlabel('Number of H3K36me3 Peaks')
-    ax.set_ylabel('Number of Interactions')
-    ax.set_title('Distribution of H3K36me3 Peaks')
-    ax.legend()
-    
-    # Plot 4: LogFC vs H3K36me3 peaks
     ax = axes[1, 0]
-    scatter = ax.scatter(merged_df['logFC'], merged_df['total_peaks'], 
-                        c=merged_df['any_anchor_overlap'], cmap='RdYlGn',
-                        alpha=0.6)
-    ax.set_xlabel('log2 Fold Change')
-    ax.set_ylabel('Number of H3K36me3 Peaks')
-    ax.set_title('H3K36me3 Enrichment vs Effect Size')
-    ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-    plt.colorbar(scatter, ax=ax, label='Overlaps H3K36me3')
+    ax.patch.set_alpha(0)
+    uninf_peaks = merged_df[merged_df['logFC'] > 0]['total_peaks']
+    wmel_peaks = merged_df[merged_df['logFC'] < 0]['total_peaks']
     
-    # Plot 5: Overlap type distribution
+    ax.hist([uninf_peaks, wmel_peaks], bins=20, label=labels, 
+            color=colors, alpha=0.7)
+    ax.set_xlabel('Number of H3K36me3 Peaks', fontsize=6)
+    ax.set_ylabel('Number of Interactions', fontsize=6)
+    ax.set_title('Distribution of H3K36me3 Peaks', fontsize=7, fontweight='bold')
+    ax.legend(fontsize=5)
+    ax.tick_params(labelsize=6)
+    
+    # Add statistical test (Mann-Whitney U test)
+    if len(uninf_peaks) > 0 and len(wmel_peaks) > 0:
+        u_stat, p_val = stats.mannwhitneyu(uninf_peaks, wmel_peaks, alternative='two-sided')
+        ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
+                transform=ax.transAxes, ha='right', va='top', fontsize=5,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    
+    # Plot 4: Overlap type distribution
     ax = axes[1, 1]
+    ax.patch.set_alpha(0)
     overlap_types = ['No overlap', 'One anchor', 'Both anchors']
     counts = [
         (~merged_df['any_anchor_overlap']).sum(),
         (merged_df['any_anchor_overlap'] & ~merged_df['both_anchors_overlap']).sum(),
         merged_df['both_anchors_overlap'].sum()
     ]
-    ax.bar(overlap_types, counts, color=['gray', 'orange', 'red'], alpha=0.7)
-    ax.set_ylabel('Number of Interactions')
-    ax.set_title('H3K36me3 Overlap Pattern')
-    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    bars = ax.bar(overlap_types, counts, color=['#cccccc', '#ff9933', '#cc3333'], alpha=0.8)
+    ax.set_ylabel('Number of Interactions', fontsize=6)
+    ax.set_title('H3K36me3 Overlap Pattern', fontsize=7, fontweight='bold')
+    ax.tick_params(axis='x', rotation=45, labelsize=6)
+    ax.tick_params(axis='y', labelsize=6)
     
-    # Plot 6: Cis vs Trans interactions
-    ax = axes[1, 2]
+    # Add value labels on bars
+    for bar, count in zip(bars, counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{count}',
+                ha='center', va='bottom', fontsize=5)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}/h3k36me3_analysis_set1.pdf", 
+                dpi=300, bbox_inches='tight', transparent=True)
+    plt.close()
+    
+    print(f"Plot set 1 saved to {output_prefix}/h3k36me3_analysis_set1.pdf")
+    
+    # --- Plot Set 2: LogFC correlations and interaction types (2x2) ---
+    fig, axes = plt.subplots(2, 2, figsize=(8, 8))
+    fig.patch.set_alpha(0)
+    
+    # Plot 1: LogFC vs H3K36me3 peaks
+    ax = axes[0, 0]
+    ax.patch.set_alpha(0)
+    
+    # Color points by genotype
+    uninf_mask = merged_df['logFC'] > 0
+    wmel_mask = merged_df['logFC'] < 0
+    
+    ax.scatter(merged_df[uninf_mask]['logFC'], merged_df[uninf_mask]['total_peaks'], 
+               c=color_jw18_uninf, alpha=0.6, s=20, label='JW18 uninf.', edgecolors='none')
+    ax.scatter(merged_df[wmel_mask]['logFC'], merged_df[wmel_mask]['total_peaks'], 
+               c=color_jw18_wmel, alpha=0.6, s=20, label='JW18 wMel', edgecolors='none')
+    
+    ax.set_xlabel('log2 Fold Change', fontsize=6)
+    ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
+    ax.set_title('H3K36me3 Enrichment vs Effect Size', fontsize=7, fontweight='bold')
+    ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
+    ax.legend(fontsize=5)
+    ax.tick_params(labelsize=6)
+    
+    # Add correlation statistics
+    corr, p_val = stats.spearmanr(merged_df['logFC'], merged_df['total_peaks'])
+    ax.text(0.05, 0.95, f'ρ = {corr:.3f}\np = {p_val:.2e}', 
+            transform=ax.transAxes, ha='left', va='top', fontsize=5,
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    
+    # Plot 2: Cis vs Trans interactions
+    ax = axes[0, 1]
+    ax.patch.set_alpha(0)
+    
     if 'interaction_type' in merged_df.columns:
         cis_overlap = merged_df[merged_df['interaction_type'] == 'cis']['any_anchor_overlap'].mean() * 100
         trans_overlap = merged_df[merged_df['interaction_type'] == 'trans']['any_anchor_overlap'].mean() * 100
         
-        ax.bar(['Cis', 'Trans'], [cis_overlap, trans_overlap], 
-               color=['blue', 'green'], alpha=0.7)
-        ax.set_ylabel('H3K36me3 Overlap Rate (%)')
-        ax.set_title('H3K36me3 Enrichment by Interaction Type')
-        ax.axhline(y=50, color='gray', linestyle='--', label='Expected')
-        ax.legend()
+        bars = ax.bar(['Cis', 'Trans'], [cis_overlap, trans_overlap], 
+               color=['#3366cc', '#33cc66'], alpha=0.8)
+        ax.set_ylabel('H3K36me3 Overlap Rate (%)', fontsize=6)
+        ax.set_title('H3K36me3 Enrichment by Interaction Type', fontsize=7, fontweight='bold')
+        ax.axhline(y=50, color='gray', linestyle='--', linewidth=0.8, label='Expected (50%)')
+        ax.legend(fontsize=5)
+        ax.tick_params(labelsize=6)
+        
+        # Add value labels on bars
+        for bar, rate in zip(bars, [cis_overlap, trans_overlap]):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{rate:.1f}%',
+                    ha='center', va='bottom', fontsize=5)
+        
+        # Add Fisher's exact test
+        cis_data = merged_df[merged_df['interaction_type'] == 'cis']
+        trans_data = merged_df[merged_df['interaction_type'] == 'trans']
+        
+        contingency = [
+            [cis_data['any_anchor_overlap'].sum(), (~cis_data['any_anchor_overlap']).sum()],
+            [trans_data['any_anchor_overlap'].sum(), (~trans_data['any_anchor_overlap']).sum()]
+        ]
+        
+        odds_ratio, p_val = stats.fisher_exact(contingency)
+        ax.text(0.5, max(cis_overlap, trans_overlap) * 0.95, f'p = {p_val:.2e}', 
+                ha='center', va='top', fontsize=5,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    
+    # Plot 3: Both anchors overlap comparison
+    ax = axes[1, 0]
+    ax.patch.set_alpha(0)
+    
+    both_anchors_rates = [
+        direction_results['jw18_uninf']['both_anchors_rate'] * 100,
+        direction_results['jw18_wmel']['both_anchors_rate'] * 100
+    ]
+    bars = ax.bar(labels, both_anchors_rates, color=colors, alpha=0.8)
+    ax.set_ylabel('Both Anchors Overlap Rate (%)', fontsize=6)
+    ax.set_title('H3K36me3 at Both Interaction Anchors', fontsize=7, fontweight='bold')
+    ax.tick_params(labelsize=6)
+    
+    # Add value labels on bars
+    for bar, rate in zip(bars, both_anchors_rates):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{rate:.1f}%',
+                ha='center', va='bottom', fontsize=5)
+    
+    # Plot 4: Sample size information
+    ax = axes[1, 1]
+    ax.patch.set_alpha(0)
+    
+    sample_sizes = [
+        direction_results['jw18_uninf']['n_interactions'],
+        direction_results['jw18_wmel']['n_interactions']
+    ]
+    bars = ax.bar(labels, sample_sizes, color=colors, alpha=0.8)
+    ax.set_ylabel('Number of Interactions', fontsize=6)
+    ax.set_title('Sample Sizes by Genotype', fontsize=7, fontweight='bold')
+    ax.tick_params(labelsize=6)
+    
+    # Add value labels on bars
+    for bar, size in zip(bars, sample_sizes):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'n={size}',
+                ha='center', va='bottom', fontsize=5)
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}/h3k36me3_analysis.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_prefix}/h3k36me3_analysis_set2.pdf", 
+                dpi=300, bbox_inches='tight', transparent=True)
     plt.close()
     
-    print(f"Visualization saved to {output_prefix}/h3k36me3_analysis.pdf")
+    print(f"Plot set 2 saved to {output_prefix}/h3k36me3_analysis_set2.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -459,10 +610,10 @@ def main():
         'overall_overlap_rate': overall_overlap_rate,
         'enrichment_vs_null': null_comparison['enrichment'],
         'p_value': null_comparison['p_value'],
-        'up_regulated_n': direction_results['up_regulated']['n_interactions'],
-        'up_regulated_overlap_rate': direction_results['up_regulated']['overlap_rate'],
-        'down_regulated_n': direction_results['down_regulated']['n_interactions'],
-        'down_regulated_overlap_rate': direction_results['down_regulated']['overlap_rate'],
+        'jw18_uninf_n': direction_results['jw18_uninf']['n_interactions'],
+        'jw18_uninf_overlap_rate': direction_results['jw18_uninf']['overlap_rate'],
+        'jw18_wmel_n': direction_results['jw18_wmel']['n_interactions'],
+        'jw18_wmel_overlap_rate': direction_results['jw18_wmel']['overlap_rate'],
         'direction_comparison_pvalue': direction_results.get('comparison', {}).get('p_value', None)
     }
     
@@ -488,16 +639,16 @@ def main():
         f.write(f"  P-value: {summary['p_value']:.2e}\n")
         f.write(f"  Significant: {'YES' if summary['p_value'] < 0.05 else 'NO'}\n\n")
         
-        f.write(f"Direction-specific Analysis:\n")
-        f.write(f"  Up-regulated interactions:\n")
-        f.write(f"    N = {summary['up_regulated_n']}\n")
-        f.write(f"    H3K36me3 overlap: {summary['up_regulated_overlap_rate']*100:.1f}%\n")
-        f.write(f"  Down-regulated interactions:\n")
-        f.write(f"    N = {summary['down_regulated_n']}\n")
-        f.write(f"    H3K36me3 overlap: {summary['down_regulated_overlap_rate']*100:.1f}%\n")
+        f.write(f"Genotype-specific Analysis:\n")
+        f.write(f"  JW18 uninf. (up-regulated) interactions:\n")
+        f.write(f"    N = {summary['jw18_uninf_n']}\n")
+        f.write(f"    H3K36me3 overlap: {summary['jw18_uninf_overlap_rate']*100:.1f}%\n")
+        f.write(f"  JW18 wMel (down-regulated) interactions:\n")
+        f.write(f"    N = {summary['jw18_wmel_n']}\n")
+        f.write(f"    H3K36me3 overlap: {summary['jw18_wmel_overlap_rate']*100:.1f}%\n")
         
         if summary['direction_comparison_pvalue'] is not None:
-            f.write(f"  Direction comparison p-value: {summary['direction_comparison_pvalue']:.2e}\n")
+            f.write(f"  Genotype comparison p-value: {summary['direction_comparison_pvalue']:.2e}\n")
     
     print(f"\nAnalysis complete! Results saved to {args.output_prefix}/*")
     

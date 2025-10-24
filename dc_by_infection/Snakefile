@@ -230,7 +230,7 @@ rule insulator_contact_analysis:
     resources:
         mem_mb = 64000,
         runtime = 720  # Permutation testing takes longer
-    threads: 4
+    threads: 64
     shell:
         '''
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh

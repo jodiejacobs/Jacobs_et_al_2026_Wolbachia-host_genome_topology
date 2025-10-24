@@ -217,10 +217,17 @@ def analyze_x_interactions(interaction_file):
         (abs(interactions['logFC']) > 1)
     ]
     
+    # Calculate total significant interactions for comparison
+    total_sig = interactions[
+        (interactions['FDR'] < 0.01) &
+        (abs(interactions['logFC']) > 1)
+    ]
+    
     # Analyze interaction patterns
     results = {
         'n_cis': len(x_cis),
         'n_trans': len(x_trans),
+        'n_total_sig': len(total_sig),
         'mean_logfc_cis': x_cis['logFC'].mean() if len(x_cis) > 0 else 0,
         'mean_logfc_trans': x_trans['logFC'].mean() if len(x_trans) > 0 else 0,
         'upregulated_cis': sum(x_cis['logFC'] > 0),
@@ -230,6 +237,37 @@ def analyze_x_interactions(interaction_file):
     }
     
     print(f"Found {results['n_cis']} X-cis and {results['n_trans']} X-trans differential interactions")
+    print(f"Total significant interactions: {results['n_total_sig']}")
+    
+    return results
+
+def analyze_null_model_stats(null_interaction_file):
+    """
+    Analyze null model statistics (no chromosome filtering possible).
+    The null model file only contains statistical columns without chromosome positions.
+    """
+    print(f"\nAnalyzing null model from {null_interaction_file}...")
+    
+    null_data = pd.read_csv(null_interaction_file)
+    
+    # Analyze overall distribution
+    sig_null = null_data[
+        (null_data['FDR'] < 0.01) &
+        (abs(null_data['logFC']) > 1)
+    ]
+    
+    results = {
+        'n_total': len(null_data),
+        'n_sig': len(sig_null),
+        'mean_logfc': sig_null['logFC'].mean() if len(sig_null) > 0 else 0,
+        'median_logfc': sig_null['logFC'].median() if len(sig_null) > 0 else 0,
+        'std_logfc': sig_null['logFC'].std() if len(sig_null) > 0 else 0,
+        'upregulated': int(sum(sig_null['logFC'] > 0)) if len(sig_null) > 0 else 0,
+        'downregulated': int(sum(sig_null['logFC'] < 0)) if len(sig_null) > 0 else 0,
+        'proportion_sig': len(sig_null) / len(null_data) if len(null_data) > 0 else 0
+    }
+    
+    print(f"Null model: {results['n_sig']} significant of {results['n_total']} total ({results['proportion_sig']:.2%})")
     
     return results
 
@@ -405,19 +443,19 @@ def create_x_regulation_plots(has_results, compartment_results, interaction_resu
         ax.set_title('HAS-Proximal Interactions')
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}_x_regulation_analysis.pdf", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{output_prefix}_analysis.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Plots saved to {output_prefix}_x_regulation_analysis.pdf")
+    print(f"Plots saved to {output_prefix}_analysis.pdf")
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze X chromosome regulation')
     parser.add_argument('--has_sites', required=True, help='HAS/CES sites BED file')
     parser.add_argument('--mcool_files', nargs='+', required=True, help='Micro-C mcool files')
     parser.add_argument('--conditions', nargs='+', required=True, help='Condition names')
-    parser.add_argument('--interaction_file', help='Differential interaction file')
-    parser.add_argument('--diffhic_results', help='DiffHic results file')
-    parser.add_argument('--resolution', type=int, default=5000, help='Resolution for analysis')
+    parser.add_argument('--interaction_file', help='Differential interaction file (real data)')
+    parser.add_argument('--null_interaction_file', help='Null model interaction file')
+    parser.add_argument('--resolution', type=int, default=8000, help='Resolution for analysis')
     parser.add_argument('--output_prefix', required=True, help='Output file prefix')
     
     args = parser.parse_args()
@@ -443,11 +481,21 @@ def main():
     
     # Analyze differential interactions if provided
     interaction_results = {}
+    interaction_results_null = {}
     has_proximity_results = {}
     
     if args.interaction_file:
+        print("\n" + "="*60)
+        print("ANALYZING REAL DATA")
+        print("="*60)
         interaction_results = analyze_x_interactions(args.interaction_file)
         has_proximity_results = analyze_has_proximity(has_sites, args.interaction_file)
+    
+    if args.null_interaction_file:
+        print("\n" + "="*60)
+        print("ANALYZING NULL MODEL")
+        print("="*60)
+        interaction_results_null = analyze_null_model_stats(args.null_interaction_file)
     
     # Create visualizations
     create_x_regulation_plots(
@@ -484,6 +532,7 @@ def main():
         interaction_summary = {
             'x_cis_interactions': interaction_results['n_cis'],
             'x_trans_interactions': interaction_results['n_trans'],
+            'total_sig_interactions': interaction_results['n_total_sig'],
             'x_cis_upregulated': interaction_results['upregulated_cis'],
             'x_cis_downregulated': interaction_results['downregulated_cis'],
             'x_trans_upregulated': interaction_results['upregulated_trans'],
@@ -508,8 +557,25 @@ def main():
         if summary:
             summary[0].update(proximity_summary)
     
+    # Add null model results
+    if interaction_results_null:
+        null_summary = {
+            'null_total_interactions': interaction_results_null['n_total'],
+            'null_sig_interactions': interaction_results_null['n_sig'],
+            'null_proportion_sig': interaction_results_null['proportion_sig'],
+            'null_mean_logfc': interaction_results_null['mean_logfc'],
+            'null_median_logfc': interaction_results_null['median_logfc'],
+            'null_std_logfc': interaction_results_null['std_logfc'],
+            'null_upregulated': interaction_results_null['upregulated'],
+            'null_downregulated': interaction_results_null['downregulated']
+        }
+        
+        # Add to first row
+        if summary:
+            summary[0].update(null_summary)
+    
     summary_df = pd.DataFrame(summary)
-    summary_df.to_csv(f"{args.output_prefix}_x_regulation_summary.tsv", sep='\t', index=False)
+    summary_df.to_csv(f"{args.output_prefix}_summary.tsv", sep='\t', index=False)
     
     # Save detailed results
     if has_results:
@@ -537,7 +603,47 @@ def main():
             })
         
         comp_df = pd.DataFrame(comp_summary)
-        comp_df.to_csv(f"{args.output_prefix}_x_compartment_changes.tsv", sep='\t', index=False)
+        comp_df.to_csv(f"{args.output_prefix}_compartment_changes.tsv", sep='\t', index=False)
+    
+    # Save null model comparison statistics if both real and null data exist
+    if interaction_results and interaction_results_null:
+        null_comparison = {
+            'metric': ['Total significant interactions', 
+                      'X-cis interactions',
+                      'X-trans interactions',
+                      'Proportion significant'],
+            'real_data': [interaction_results['n_total_sig'],
+                         interaction_results['n_cis'],
+                         interaction_results['n_trans'],
+                         interaction_results['n_total_sig'] / interaction_results_null['n_total'] if interaction_results_null['n_total'] > 0 else 0],
+            'null_model': [interaction_results_null['n_sig'],
+                          np.nan,  # Can't calculate X-specific for null
+                          np.nan,
+                          interaction_results_null['proportion_sig']],
+            'enrichment': [interaction_results['n_total_sig'] / interaction_results_null['n_sig'] if interaction_results_null['n_sig'] > 0 else np.nan,
+                          np.nan,
+                          np.nan,
+                          (interaction_results['n_total_sig'] / interaction_results_null['n_total']) / interaction_results_null['proportion_sig'] if interaction_results_null['proportion_sig'] > 0 else np.nan]
+        }
+        
+        null_comp_df = pd.DataFrame(null_comparison)
+        null_comp_df.to_csv(f"{args.output_prefix}_null_comparison_stats.tsv", sep='\t', index=False)
+        
+        # Save detailed null comparison
+        detailed_null = pd.DataFrame([{
+            'real_total_sig': interaction_results['n_total_sig'],
+            'real_x_cis': interaction_results['n_cis'],
+            'real_x_trans': interaction_results['n_trans'],
+            'real_mean_logfc_cis': interaction_results['mean_logfc_cis'],
+            'real_mean_logfc_trans': interaction_results['mean_logfc_trans'],
+            'null_total': interaction_results_null['n_total'],
+            'null_sig': interaction_results_null['n_sig'],
+            'null_proportion_sig': interaction_results_null['proportion_sig'],
+            'null_mean_logfc': interaction_results_null['mean_logfc'],
+            'null_median_logfc': interaction_results_null['median_logfc'],
+            'null_std_logfc': interaction_results_null['std_logfc']
+        }])
+        detailed_null.to_csv(f"{args.output_prefix}_null_comparison_detailed.tsv", sep='\t', index=False)
     
     print(f"\nAnalysis complete. Results saved to {args.output_prefix}_*")
     
@@ -550,9 +656,18 @@ def main():
     if interaction_results:
         print(f"  X-chromosome cis interactions: {interaction_results['n_cis']}")
         print(f"  X-chromosome trans interactions: {interaction_results['n_trans']}")
+        print(f"  Total significant interactions: {interaction_results['n_total_sig']}")
     
     if has_proximity_results:
         print(f"  HAS-proximal interactions: {has_proximity_results['n_has_proximal']}")
+    
+    if interaction_results_null:
+        print(f"\nNull model:")
+        print(f"  Total interactions: {interaction_results_null['n_total']}")
+        print(f"  Significant interactions: {interaction_results_null['n_sig']} ({interaction_results_null['proportion_sig']:.2%})")
+        if interaction_results:
+            enrichment = interaction_results['n_total_sig'] / interaction_results_null['n_sig'] if interaction_results_null['n_sig'] > 0 else np.nan
+            print(f"  Enrichment over null: {enrichment:.2f}x")
 
 if __name__ == '__main__':
     main()
