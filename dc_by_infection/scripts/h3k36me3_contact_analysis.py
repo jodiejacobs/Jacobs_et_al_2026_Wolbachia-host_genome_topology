@@ -221,6 +221,17 @@ def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000
     
     return results_df
 
+def ensure_boolean_columns(df, columns):
+    """
+    FIX: Ensure specified columns are boolean type and handle NaN values.
+    This prevents TypeError when using the ~ operator.
+    """
+    df = df.copy()
+    for col in columns:
+        if col in df.columns:
+            df[col] = df[col].fillna(False).astype(bool)
+    return df
+
 def analyze_by_logfc_direction(interactions_df, overlap_results):
     """Analyze H3K36me3 enrichment by logFC direction (JW18 uninf. vs JW18 wMel)"""
     print("\nAnalyzing by logFC direction...")
@@ -229,6 +240,10 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     merged = interactions_df.copy()
     merged['overlap_idx'] = range(len(merged))
     merged = merged.merge(overlap_results, left_on='overlap_idx', right_on='interaction_idx', how='left')
+    
+    # FIX: Ensure boolean columns are properly typed
+    bool_cols = ['anchor1_overlap', 'anchor2_overlap', 'both_anchors_overlap', 'any_anchor_overlap']
+    merged = ensure_boolean_columns(merged, bool_cols)
     
     # Add interaction type
     merged['interaction_type'] = np.where(merged['chr1'] == merged['chr2'], 'cis', 'trans')
@@ -254,9 +269,12 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     }
     
     # Statistical comparison using Fisher's exact test
+    # FIX: Ensure boolean before using ~ operator
     contingency = [
-        [jw18_uninf['any_anchor_overlap'].sum(), (~jw18_uninf['any_anchor_overlap']).sum()],
-        [jw18_wmel['any_anchor_overlap'].sum(), (~jw18_wmel['any_anchor_overlap']).sum()]
+        [jw18_uninf['any_anchor_overlap'].sum(), 
+         (~jw18_uninf['any_anchor_overlap']).sum()],
+        [jw18_wmel['any_anchor_overlap'].sum(), 
+         (~jw18_wmel['any_anchor_overlap']).sum()]
     ]
     
     odds_ratio, p_value = stats.fisher_exact(contingency)
@@ -307,6 +325,10 @@ def compare_to_null_model(real_overlap_rate, null_model):
 def create_visualization(merged_df, direction_results, output_prefix):
     """Create separate 2x2 visualizations with updated labels and colors"""
     print("\nCreating visualizations...")
+    
+    # FIX: Ensure all boolean columns are properly typed before visualization
+    bool_cols = ['anchor1_overlap', 'anchor2_overlap', 'both_anchors_overlap', 'any_anchor_overlap']
+    merged_df = ensure_boolean_columns(merged_df, bool_cols)
     
     # Define colors for JW18 uninf. and JW18 wMel
     color_jw18_uninf = '#8fcb84'  # Light green for JW18 uninf. (upregulated)
@@ -474,8 +496,11 @@ def create_visualization(merged_df, direction_results, output_prefix):
                     ha='center', va='bottom', fontsize=5)
         
         # Add Fisher's exact test
-        cis_data = merged_df[merged_df['interaction_type'] == 'cis']
-        trans_data = merged_df[merged_df['interaction_type'] == 'trans']
+        # FIX: Ensure boolean columns before using ~
+        cis_data = merged_df[merged_df['interaction_type'] == 'cis'].copy()
+        trans_data = merged_df[merged_df['interaction_type'] == 'trans'].copy()
+        cis_data = ensure_boolean_columns(cis_data, ['any_anchor_overlap'])
+        trans_data = ensure_boolean_columns(trans_data, ['any_anchor_overlap'])
         
         contingency = [
             [cis_data['any_anchor_overlap'].sum(), (~cis_data['any_anchor_overlap']).sum()],

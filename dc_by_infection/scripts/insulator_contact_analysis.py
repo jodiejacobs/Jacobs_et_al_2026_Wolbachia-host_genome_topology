@@ -3,6 +3,8 @@
 Analyze insulator protein enrichment at differential chromatin contacts.
 Uses permutation testing to assess statistical significance.
 
+OPTIMIZED VERSION - Uses vectorized BedTools operations instead of per-interaction loops
+
 Insulators tested:
 - Class I (CTCF-dependent)
 - Class II (CTCF-independent: Su(Hw), BEAF-32, etc.)
@@ -128,8 +130,8 @@ def load_null_model(null_file):
 
 def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10000):
     """
-    Calculate overlap between interaction anchors and insulator sites.
-    Uses moderate window (10kb default) for nearby insulator effects.
+    OPTIMIZED: Calculate overlap between interaction anchors and insulator sites.
+    Uses vectorized BedTools operations instead of per-interaction loops.
     """
     print(f"\nAnalyzing insulator overlap (window size: {window_size}bp)")
     
@@ -139,83 +141,96 @@ def calculate_insulator_overlap(interactions_df, insulator_sites, window_size=10
     
     # Create extended insulator regions
     insulators_extended = insulator_sites.copy()
-    insulators_extended['start'] = insulators_extended['start'] - window_size
+    insulators_extended['start'] = (insulators_extended['start'] - window_size).clip(lower=0)
     insulators_extended['end'] = insulators_extended['end'] + window_size
-    insulators_extended['start'] = insulators_extended['start'].clip(lower=0)
     
     insulator_bt = pybedtools.BedTool.from_dataframe(
         insulators_extended[['chrom', 'start', 'end']]
     )
     
-    results = []
+    # OPTIMIZATION 1: Create BedTools for all anchors at once instead of in a loop
+    anchor1_df = interactions_df[['chr1', 'start1', 'end1']].copy()
+    anchor1_df.columns = ['chrom', 'start', 'end']
+    anchor1_df['idx'] = interactions_df.index
     
-    for idx, interaction in interactions_df.iterrows():
-        # Create anchor BedTools
-        anchor1_df = pd.DataFrame([{
-            'chrom': interaction['chr1'],
-            'start': interaction['start1'],
-            'end': interaction['end1']
-        }])
+    anchor2_df = interactions_df[['chr2', 'start2', 'end2']].copy()
+    anchor2_df.columns = ['chrom', 'start', 'end']
+    anchor2_df['idx'] = interactions_df.index
+    
+    anchor1_bt = pybedtools.BedTool.from_dataframe(anchor1_df)
+    anchor2_bt = pybedtools.BedTool.from_dataframe(anchor2_df)
+    
+    # OPTIMIZATION 2: Use BedTools intersect operations in batch
+    # Count overlaps for each anchor
+    anchor1_overlaps = anchor1_bt.intersect(insulator_bt, c=True)
+    anchor2_overlaps = anchor2_bt.intersect(insulator_bt, c=True)
+    
+    # Convert to DataFrames
+    anchor1_counts = pd.DataFrame([
+        (x.chrom, x.start, x.end, int(x.name), int(x.fields[3]))
+        for x in anchor1_overlaps
+    ], columns=['chrom', 'start', 'end', 'idx', 'n_ins_anchor1'])
+    
+    anchor2_counts = pd.DataFrame([
+        (x.chrom, x.start, x.end, int(x.name), int(x.fields[3]))
+        for x in anchor2_overlaps
+    ], columns=['chrom', 'start', 'end', 'idx', 'n_ins_anchor2'])
+    
+    # OPTIMIZATION 3: Use BedTools closest operation for distances
+    # This is MUCH faster than manual distance calculation
+    insulator_base_bt = pybedtools.BedTool.from_dataframe(
+        insulator_sites[['chrom', 'start', 'end']]
+    )
+    
+    anchor1_closest = anchor1_bt.closest(insulator_base_bt, d=True)
+    anchor2_closest = anchor2_bt.closest(insulator_base_bt, d=True)
+    
+    # Extract distances
+    anchor1_dists = {}
+    for x in anchor1_closest:
+        idx = int(x.fields[3])
+        dist = int(x.fields[-1])  # Last field is distance
+        if idx not in anchor1_dists or dist < anchor1_dists[idx]:
+            anchor1_dists[idx] = dist
+    
+    anchor2_dists = {}
+    for x in anchor2_closest:
+        idx = int(x.fields[3])
+        dist = int(x.fields[-1])
+        if idx not in anchor2_dists or dist < anchor2_dists[idx]:
+            anchor2_dists[idx] = dist
+    
+    # Merge results
+    results = []
+    for idx in interactions_df.index:
+        n_ins_1 = anchor1_counts[anchor1_counts['idx'] == idx]['n_ins_anchor1'].values
+        n_ins_1 = n_ins_1[0] if len(n_ins_1) > 0 else 0
         
-        anchor2_df = pd.DataFrame([{
-            'chrom': interaction['chr2'],
-            'start': interaction['start2'],
-            'end': interaction['end2']
-        }])
+        n_ins_2 = anchor2_counts[anchor2_counts['idx'] == idx]['n_ins_anchor2'].values
+        n_ins_2 = n_ins_2[0] if len(n_ins_2) > 0 else 0
         
-        try:
-            anchor1_bt = pybedtools.BedTool.from_dataframe(anchor1_df)
-            anchor2_bt = pybedtools.BedTool.from_dataframe(anchor2_df)
-            
-            # Count overlaps
-            anchor1_overlaps = anchor1_bt.intersect(insulator_bt, wa=True)
-            anchor2_overlaps = anchor2_bt.intersect(insulator_bt, wa=True)
-            
-            n_ins_anchor1 = len(list(anchor1_overlaps))
-            n_ins_anchor2 = len(list(anchor2_overlaps))
-            
-            anchor1_overlap = n_ins_anchor1 > 0
-            anchor2_overlap = n_ins_anchor2 > 0
-            
-            # Calculate distance to nearest insulator
-            distances_1 = []
-            for _, ins_site in insulator_sites.iterrows():
-                if ins_site['chrom'] == interaction['chr1']:
-                    dist = min(
-                        abs(interaction['start1'] - ins_site['end']),
-                        abs(interaction['end1'] - ins_site['start'])
-                    )
-                    distances_1.append(dist)
-            
-            distances_2 = []
-            for _, ins_site in insulator_sites.iterrows():
-                if ins_site['chrom'] == interaction['chr2']:
-                    dist = min(
-                        abs(interaction['start2'] - ins_site['end']),
-                        abs(interaction['end2'] - ins_site['start'])
-                    )
-                    distances_2.append(dist)
-            
-            min_dist_anchor1 = min(distances_1) if distances_1 else np.inf
-            min_dist_anchor2 = min(distances_2) if distances_2 else np.inf
-            
-            results.append({
-                'interaction_idx': idx,
-                'anchor1_overlap': anchor1_overlap,
-                'anchor2_overlap': anchor2_overlap,
-                'any_anchor_overlap': anchor1_overlap or anchor2_overlap,
-                'both_anchors_overlap': anchor1_overlap and anchor2_overlap,
-                'n_ins_anchor1': n_ins_anchor1,
-                'n_ins_anchor2': n_ins_anchor2,
-                'total_insulators': n_ins_anchor1 + n_ins_anchor2,
-                'min_dist_anchor1': min_dist_anchor1,
-                'min_dist_anchor2': min_dist_anchor2,
-                'min_dist_any': min(min_dist_anchor1, min_dist_anchor2)
-            })
-            
-        except Exception as e:
-            print(f"Warning: Could not process interaction {idx}: {e}")
-            continue
+        min_dist_1 = anchor1_dists.get(idx, np.inf)
+        min_dist_2 = anchor2_dists.get(idx, np.inf)
+        
+        # Handle cases where distance is -1 (no overlap found on same chromosome)
+        if min_dist_1 == -1:
+            min_dist_1 = np.inf
+        if min_dist_2 == -1:
+            min_dist_2 = np.inf
+        
+        results.append({
+            'interaction_idx': idx,
+            'anchor1_overlap': n_ins_1 > 0,
+            'anchor2_overlap': n_ins_2 > 0,
+            'any_anchor_overlap': (n_ins_1 > 0) or (n_ins_2 > 0),
+            'both_anchors_overlap': (n_ins_1 > 0) and (n_ins_2 > 0),
+            'n_ins_anchor1': n_ins_1,
+            'n_ins_anchor2': n_ins_2,
+            'total_insulators': n_ins_1 + n_ins_2,
+            'min_dist_anchor1': min_dist_1,
+            'min_dist_anchor2': min_dist_2,
+            'min_dist_any': min(min_dist_1, min_dist_2)
+        })
     
     results_df = pd.DataFrame(results)
     
@@ -254,9 +269,8 @@ def permutation_test_enrichment(interactions_df, insulator_sites, genome_file,
     
     # Extend insulator sites
     insulators_extended = insulator_sites.copy()
-    insulators_extended['start'] = insulators_extended['start'] - window_size
+    insulators_extended['start'] = (insulators_extended['start'] - window_size).clip(lower=0)
     insulators_extended['end'] = insulators_extended['end'] + window_size
-    insulators_extended['start'] = insulators_extended['start'].clip(lower=0)
     
     insulator_bt = pybedtools.BedTool.from_dataframe(
         insulators_extended[['chrom', 'start', 'end']]
@@ -622,6 +636,7 @@ def main():
     print("="*60)
     print("INSULATOR ENRICHMENT ANALYSIS")
     print("With Permutation Testing")
+    print("OPTIMIZED VERSION")
     print("="*60)
     
     # Load data
