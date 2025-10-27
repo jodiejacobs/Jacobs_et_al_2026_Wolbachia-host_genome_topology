@@ -403,6 +403,7 @@ def analyze_by_logfc_direction(interactions_df, overlap_df):
     
     merged = interactions_df.copy()
     merged['any_anchor_overlap'] = overlap_df['any_anchor_overlap'].values
+    merged['both_anchors_overlap'] = overlap_df['both_anchors_overlap'].values
     merged['total_insulators'] = overlap_df['total_insulators'].values
     merged['min_dist_any'] = overlap_df['min_dist_any'].values
     
