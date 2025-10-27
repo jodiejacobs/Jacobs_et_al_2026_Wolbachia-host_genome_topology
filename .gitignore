@@ -40,3 +40,5 @@ network_analysis/
 # Claude Code documentation
 CLAUDE.md
 **/CLAUDE.md
+dc_by_infection/plots_pub/*.svg
+dc_by_infection/plots_pub/*_compressed.png # optional, if other large PNGs
