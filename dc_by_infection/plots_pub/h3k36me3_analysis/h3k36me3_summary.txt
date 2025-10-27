@@ -1,0 +1,26 @@
+H3K36me3 ENRICHMENT ANALYSIS SUMMARY
+============================================================
+
+Analysis Parameters:
+  Window size: 5000 bp
+  FDR threshold: 0.05
+
+Data Summary:
+  Total X chromosome interactions: 11212
+  Significant interactions: 10972
+  H3K36me3 peaks on X: 1064
+
+H3K36me3 Enrichment:
+  Overall overlap rate: 81.4%
+  Enrichment vs null: 1.63x
+  P-value: 2.47e-323
+  Significant: YES
+
+Genotype-specific Analysis:
+  JW18 uninf. (up-regulated) interactions:
+    N = 10280
+    H3K36me3 overlap: 1.2%
+  JW18 wMel (down-regulated) interactions:
+    N = 692
+    H3K36me3 overlap: 0.9%
+  Genotype comparison p-value: 5.82e-01

@@ -1,0 +1,45 @@
+HAS/CES ENRICHMENT ANALYSIS SUMMARY
+============================================================
+
+Analysis Parameters:
+  Window size: 50000 bp
+  FDR threshold: 0.05
+  Note: Large window accounts for MSL spreading from HAS
+
+Data Summary:
+  Total X chromosome interactions: 11212
+  Significant interactions: 10972
+  HAS/CES sites on X: 130
+
+HAS/CES Enrichment:
+  Overall overlap rate: 74.9%
+  Expected (null): 7.5%
+  Enrichment: 9.98x
+  P-value: 0.00e+00
+  Significant: YES
+
+Distance Analysis:
+  Median distance to HAS: 21.1 kb
+  Mean distance to HAS: 55.0 kb
+
+Genotype-specific Analysis:
+  JW18 uninf. (up-regulated) interactions:
+    N = 10280
+    HAS overlap: 74.2%
+    Median distance: 21.1 kb
+  JW18 wMel (down-regulated) interactions:
+    N = 692
+    HAS overlap: 85.0%
+    Median distance: 21.1 kb
+
+  Statistical tests:
+    Overlap rate difference: p = 3.45e-10
+    Distance difference: p = 4.43e-03
+
+
+Biological Interpretation:
+------------------------------------------------------------
+STRONG ENRICHMENT: Differential contacts are significantly enriched
+near HAS/CES sites, suggesting Wolbachia affects chromatin contacts
+at dosage compensation entry sites.
+

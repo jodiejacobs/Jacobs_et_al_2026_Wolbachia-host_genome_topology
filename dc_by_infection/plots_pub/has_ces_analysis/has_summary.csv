@@ -1,0 +1,2 @@
+total_x_interactions,significant_x_interactions,has_sites_on_x,window_size,overall_overlap_rate,enrichment_vs_null,p_value,jw18_uninf_n,jw18_uninf_overlap_rate,jw18_uninf_median_distance,jw18_wmel_n,jw18_wmel_overlap_rate,jw18_wmel_median_distance,direction_overlap_pvalue,direction_distance_pvalue,median_distance_to_has,mean_distance_to_has
+11212,10972,130,50000,0.7488151658767772,9.984202211690363,0.0,10280,0.742023346303502,21114.0,692,0.8497109826589595,21114.0,3.4468398372722997e-10,0.004432993622686888,21114.0,55007.305869485965
