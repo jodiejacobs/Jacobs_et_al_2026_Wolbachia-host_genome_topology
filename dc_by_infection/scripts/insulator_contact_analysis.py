@@ -649,7 +649,7 @@ def main():
     args = parser.parse_args()
     
     # Create output directory
-    output_dir = Path(args.output_prefix).parent
+    output_dir = Path(args.output_prefix)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("="*60)
