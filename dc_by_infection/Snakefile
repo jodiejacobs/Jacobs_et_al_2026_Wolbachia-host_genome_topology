@@ -223,7 +223,7 @@ rule insulator_contact_analysis:
         plot = f"{output_dir}/insulator_analysis/insulator_analysis.pdf",
         summary_csv = f"{output_dir}/insulator_analysis/insulator_summary.csv"
     params:
-        window_size = 10000,  # 10kb window for insulator effects
+        window_size = 1000,  # 10kb window for insulator effects
         n_permutations = 100,  # Number of permutations
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/insulator_analysis/insulator"
@@ -263,7 +263,7 @@ rule check_ndf_interaction:
         mem_mb = 64000,
         runtime = 720  # Permutation testing takes longer
     params:
-        window_size = 10000,
+        window_size = 1000,
         n_permutations = 100,
         output_prefix = f"{output_dir}/insulator_analysis/ndf_interaction"
     shell:
