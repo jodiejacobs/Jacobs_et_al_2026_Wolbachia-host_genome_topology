@@ -551,9 +551,9 @@ def create_visualization(class_results, merged_df, perm_results, output_prefix):
     if 'logFC' in merged_df.columns:
         up_rate = merged_df[merged_df['logFC'] > 0]['any_anchor_overlap'].mean() * 100
         down_rate = merged_df[merged_df['logFC'] < 0]['any_anchor_overlap'].mean() * 100
-        
-        ax.bar(['Up-regulated', 'Down-regulated'], [up_rate, down_rate],
-               color=['#d62728', '#2ca02c'], alpha=0.7)
+
+        ax.bar(['Uninf.', 'wMel'], [up_rate, down_rate],
+               color=['#8fcb84', '#09aa4b'], alpha=0.7)
         ax.set_ylabel('Insulator Overlap Rate (%)')
         ax.set_title('Direction-Specific Enrichment')
     
@@ -568,14 +568,14 @@ def create_visualization(class_results, merged_df, perm_results, output_prefix):
         down_dists = plot_data[plot_data['logFC'] < 0]['min_dist_any']
         
         ax.hist([up_dists, down_dists], bins=bins, 
-               label=['Up-regulated', 'Down-regulated'],
-               color=['#d62728', '#2ca02c'], alpha=0.6)
+               label=['Uninf.', 'wMel'],
+               color=['#8fcb84', '#09aa4b'], alpha=0.6)
         ax.set_xscale('log')
         ax.set_xlabel('Distance to Nearest Insulator (bp)')
         ax.set_ylabel('Number of Interactions')
         ax.set_title('Distance Distribution to Insulators')
         ax.legend()
-        ax.axvline(10000, color='gray', linestyle='--', alpha=0.5, label='Window size')
+        ax.axvline(1000, color='gray', linestyle='--', alpha=0.5, label='1kb')
     
     # Plot 5: LogFC vs insulators
     ax = fig.add_subplot(gs[2, 0])
@@ -614,6 +614,7 @@ def create_visualization(class_results, merged_df, perm_results, output_prefix):
         ax.set_title('Cumulative Distance Distribution')
         ax.grid(True, alpha=0.3)
         ax.axvline(10000, color='red', linestyle='--', alpha=0.5, label='10kb')
+        ax.axvline(1000, color='red', linestyle='--', alpha=0.5, label='1kb')
         ax.legend()
     
     plt.savefig(f"{output_prefix}/insulator_analysis.pdf", dpi=300, bbox_inches='tight')
