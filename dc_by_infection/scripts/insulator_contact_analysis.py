@@ -374,7 +374,11 @@ def calculate_genomic_background_model(interactions_df, insulator_sites, genome_
         results.append({
             'interaction_idx': idx,
             'chr1': chr1,
+            'start1': row['start1'],  # ADD THIS
+            'end1': row['end1'],      # ADD THIS
             'chr2': chr2,
+            'start2': row['start2'],  # ADD THIS
+            'end2': row['end2'],      # ADD THIS
             'density1': density1,
             'density2': density2,
             'p_anchor1_overlap': p_anchor1_overlap,
@@ -383,9 +387,10 @@ def calculate_genomic_background_model(interactions_df, insulator_sites, genome_
             'p_both_overlap': p_both_overlap,
             'observed_any': observed_any,
             'observed_both': observed_both,
-            'logFC': row['logFC']
+            'logFC': row['logFC'],
+            'FDR': row['FDR'] if 'FDR' in row else np.nan  # ADD THIS TOO
         })
-    
+
     results_df = pd.DataFrame(results)
     
     # Calculate overall statistics
@@ -548,6 +553,149 @@ def permutation_test_enrichment(interactions_df, insulator_sites, genome_file,
         'p_value': p_value,
         'n_permutations': len(null_overlap_rates)
     }
+def create_specific_interaction_plot(interaction_info, background_summary, output_prefix):
+    """
+    Create a detailed plot for a specific interaction showing its enrichment over background.
+    """
+    if interaction_info is None:
+        return
+    
+    interaction = interaction_info['interaction']
+    overlap = interaction_info['overlap']
+    background = interaction_info['background']
+    
+    if background is None:
+        print("No background model data available for plotting")
+        return
+    
+    # Create figure with multiple panels
+    fig = plt.figure(figsize=(14, 10))
+    gs = fig.add_gridspec(3, 2, hspace=0.4, wspace=0.3)
+    
+    # Panel 1: Overview of the interaction
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.axis('off')
+    
+    title_text = (f"Specific Interaction Analysis\n"
+                 f"{interaction['chr1']}:{interaction['start1']:,}-{interaction['end1']:,} ↔ "
+                 f"{interaction['chr2']}:{interaction['start2']:,}-{interaction['end2']:,}")
+    ax1.text(0.5, 0.9, title_text, ha='center', va='top', fontsize=14, weight='bold',
+             transform=ax1.transAxes)
+    
+    info_text = (f"logFC: {interaction['logFC']:.2f}  |  "
+                f"FDR: {interaction['FDR']:.2e}  |  "
+                f"Direction: {'UP (wMel > Uninfected)' if interaction['logFC'] > 0 else 'DOWN (wMel < Uninfected)'}")
+    ax1.text(0.5, 0.6, info_text, ha='center', va='top', fontsize=11,
+             transform=ax1.transAxes)
+    
+    # Panel 2: Insulator overlap visualization
+    ax2 = fig.add_subplot(gs[1, 0])
+    
+    overlap_data = {
+        'Anchor 1': overlap['n_ins_anchor1'],
+        'Anchor 2': overlap['n_ins_anchor2']
+    }
+    colors = ['#1f77b4' if v > 0 else '#d3d3d3' for v in overlap_data.values()]
+    bars = ax2.bar(overlap_data.keys(), overlap_data.values(), color=colors, alpha=0.7)
+    ax2.set_ylabel('Number of Insulators\nWithin 10kb', fontsize=11)
+    ax2.set_title('Observed Insulator Overlap', fontsize=12, weight='bold')
+    
+    # Add counts on bars
+    for bar, count in zip(bars, overlap_data.values()):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                f'{int(count)}', ha='center', va='bottom', fontsize=10)
+    
+    # Panel 3: Expected probability vs observed
+    ax3 = fig.add_subplot(gs[1, 1])
+    
+    expected_pct = background['p_any_overlap'] * 100
+    observed = 'YES' if overlap['any_anchor_overlap'] else 'NO'
+    
+    # Create a horizontal bar showing probability
+    ax3.barh([0], [expected_pct], height=0.3, color='lightblue', alpha=0.7, 
+             label='Expected by chance')
+    
+    if overlap['any_anchor_overlap']:
+        ax3.barh([0.5], [100], height=0.3, color='darkgreen', alpha=0.7,
+                label='Observed: YES')
+    else:
+        ax3.barh([0.5], [0], height=0.3, color='gray', alpha=0.7,
+                label='Observed: NO')
+    
+    ax3.set_xlim(0, 100)
+    ax3.set_yticks([0, 0.5])
+    ax3.set_yticklabels(['Expected\nProbability', 'Observed\nOverlap'])
+    ax3.set_xlabel('Probability (%)', fontsize=11)
+    ax3.set_title('Expected vs Observed Overlap', fontsize=12, weight='bold')
+    ax3.legend(loc='upper right', fontsize=9)
+    
+    # Add percentage text
+    ax3.text(expected_pct/2, 0, f'{expected_pct:.1f}%', 
+            ha='center', va='center', fontsize=10, weight='bold')
+    
+    # Panel 4: Statistical significance
+    ax4 = fig.add_subplot(gs[2, 0])
+    ax4.axis('off')
+    
+    # Calculate p-value for this interaction
+    p_value = background['p_any_overlap']
+    
+    sig_text = "STATISTICAL SIGNIFICANCE\n" + "="*40 + "\n\n"
+    sig_text += f"Likelihood of overlap by chance: {p_value*100:.2f}%\n"
+    sig_text += f"P-value: {min(p_value, 1-p_value):.4f}\n\n"
+    
+    if p_value < 0.01:
+        sig_text += "⭐⭐⭐ HIGHLY SIGNIFICANT\n"
+        sig_text += "This overlap is RARE by chance (<1%).\n"
+        sig_text += "Likely BIOLOGICALLY MEANINGFUL!"
+    elif p_value < 0.05:
+        sig_text += "⭐⭐ SIGNIFICANT\n"
+        sig_text += "This overlap is UNCOMMON by chance (<5%).\n"
+        sig_text += "Likely biologically relevant."
+    elif p_value < 0.20:
+        sig_text += "⭐ MARGINALLY SIGNIFICANT\n"
+        sig_text += f"This overlap occurs in ~{p_value*100:.0f}% of interactions.\n"
+        sig_text += "May be biologically relevant."
+    else:
+        sig_text += "NOT SIGNIFICANT\n"
+        sig_text += f"This overlap is COMMON by chance (~{p_value*100:.0f}%).\n"
+        sig_text += "May be coincidental."
+    
+    ax4.text(0.1, 0.9, sig_text, ha='left', va='top', fontsize=10,
+            family='monospace', transform=ax4.transAxes)
+    
+    # Panel 5: Distance to nearest insulator
+    ax5 = fig.add_subplot(gs[2, 1])
+    
+    distances = {
+        'Anchor 1': overlap['min_dist_anchor1'] if not np.isinf(overlap['min_dist_anchor1']) else 1000000,
+        'Anchor 2': overlap['min_dist_anchor2'] if not np.isinf(overlap['min_dist_anchor2']) else 1000000
+    }
+    
+    bars = ax5.bar(distances.keys(), [d/1000 for d in distances.values()], 
+                   color=['green' if d < 10000 else 'orange' if d < 50000 else 'red' 
+                         for d in distances.values()], alpha=0.7)
+    ax5.set_ylabel('Distance (kb)', fontsize=11)
+    ax5.set_title('Distance to Nearest Insulator', fontsize=12, weight='bold')
+    ax5.axhline(y=10, color='gray', linestyle='--', alpha=0.5, label='10kb threshold')
+    ax5.legend(fontsize=8)
+    
+    # Add distance labels
+    for bar, dist in zip(bars, distances.values()):
+        height = bar.get_height()
+        if dist < 1000000:
+            label = f'{dist/1000:.1f}kb'
+        else:
+            label = '>1Mb'
+        ax5.text(bar.get_x() + bar.get_width()/2., height,
+                label, ha='center', va='bottom', fontsize=9)
+    
+    plt.savefig(f"{output_prefix}/specific_interaction_analysis.pdf", 
+                dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\n✓ Saved specific interaction plot: {output_prefix}/specific_interaction_analysis.pdf")
 
 def analyze_by_insulator_class(interactions_df, insulators_dict, genome_file, 
                                window_size=10000, n_permutations=1000):
@@ -1131,11 +1279,17 @@ def main():
         # Check specific interaction if requested
         if args.check_interaction:
             chr1, start1, end1, chr2, start2, end2 = args.check_interaction
-            check_specific_interaction(
+            specific_result = check_specific_interaction(
                 sig_interactions, overlap_results, background_results_df,
                 chr1, int(start1), int(end1),
                 chr2, int(start2), int(end2)
             )
+            
+            # Create dedicated plot for this interaction
+            if specific_result:
+                create_specific_interaction_plot(
+                    specific_result, background_summary, args.output_prefix
+                )
         
         # Create visualizations
         create_visualization(class_results, merged_df, perm_results, args.output_prefix)
