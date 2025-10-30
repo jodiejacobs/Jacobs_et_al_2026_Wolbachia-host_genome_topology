@@ -42,13 +42,7 @@ rule all:
         # DiffHic analysis outputs (the R script creates comprehensive outputs)
         f"{output_dir}/diffhic_results/summary/comprehensive_summary.txt",
         f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
-        
-        # Chromatin structure analysis
-        # f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv", 
-        
-        # Architectural protein enrichment
-        # f"{output_dir}/enrichment/architectural_strain_plots.pdf",
-        
+    
         # Enhancer class analysis
         f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
         
@@ -81,7 +75,7 @@ rule identify_contacts:
         conda activate {COOLER_ENV}
         
         mkdir -p {output_dir}/contacts/
-        bash scripts/extract_multi_resolution_v5.sh \
+        bash scripts/extract_multi_resolution.sh \
         {input.cooler1} {input.cooler2} {output.contacts}
         '''
 
@@ -145,7 +139,7 @@ rule diffhic_analysis:
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
         conda activate {R_DIFFHIC_ENV}
         
-        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution_4.R \
+        Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution.R \
         --data_dir={params.contacts_dir} \
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
@@ -386,38 +380,6 @@ rule chromatin_structure_analysis:
             --resolution_loop 4000 \
             --fdr_threshold 0.1 \
             --tad_window_size 50000 \
-            --output_prefix {params.output_prefix}
-        '''
-
-# Architectural protein enrichment analysis
-rule architectural_enrichment:
-    input:
-        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
-        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
-        genome = genome_file,
-        chip_peaks = f"{chip_dir}/.prepared"
-    output:
-        plot = f"{output_dir}/enrichment/strain_specific_strain_plots.pdf",
-        summary = f"{output_dir}/enrichment/architectural_strain_plots.pdf"
-    params:
-        chip_dir = chip_dir,
-        output_prefix = f"{output_dir}/enrichment/architectural"
-    resources:
-        mem_mb = 100000,
-        runtime = 240
-    threads: 8
-    shell:
-        '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
-        
-        python scripts/strain_specific_architectural_enrichment.py \
-            --interactions {input.interactions} \
-            --null_model {input.null_model} \
-            --chip_dir {params.chip_dir} \
-            --genome {input.genome} \
-            --window_size 5000 \
-            --fdr_threshold 0.1 \
             --output_prefix {params.output_prefix}
         '''
 
