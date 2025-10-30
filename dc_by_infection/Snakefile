@@ -58,6 +58,7 @@ rule all:
         # f"{output_dir}/x_analysis/x_regulation_null_comparison_stats.tsv",
         f"{output_dir}/has_ces_analysis/has_summary.txt",
         f"{output_dir}/insulator_analysis/insulator_summary.txt",
+
         f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
         f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
 
@@ -436,8 +437,8 @@ rule enhancer_class_analysis:
         fdr_threshold = 0.1
     resources:
         mem_mb = 100000,
-        runtime = 240
-    threads: 8
+        runtime = 720
+    threads: 64
     shell:
         '''
         source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
