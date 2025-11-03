@@ -11,6 +11,13 @@ import seaborn as sns
 from pathlib import Path
 from collections import defaultdict
 
+# Color scheme
+WMEL_COLOR = '#09aa4b'      # wMel (infected) - positive logFC
+UNINF_COLOR = '#8fcb84'     # Uninfected (DOX) - negative logFC
+NULL_COLOR = '#666666'      # Null model
+SIG_COLOR = '#09aa4b'       # Significant results
+NONSIG_COLOR = '#999999'    # Non-significant results
+
 def load_interactions(interactions_file):
     """Load differential interactions (wMel vs DOX comparison)."""
     print(f"Loading interactions from {interactions_file}")
@@ -404,8 +411,18 @@ def compare_to_null_model(enh_interactions, null_stats, fdr_threshold=0.05):
     return results_df
 
 
+def format_pvalue(pval):
+    """Format p-value for display"""
+    if pval < 0.001:
+        return f"p < 0.001"
+    elif pval < 0.01:
+        return f"p = {pval:.3f}"
+    else:
+        return f"p = {pval:.2f}"
+
+
 def create_visualizations(enh_interactions, comparison_results, null_model, output_prefix):
-    """Create comprehensive visualizations."""
+    """Create comprehensive visualizations as separate PDF files."""
     
     if enh_interactions.empty:
         print("No data to visualize")
@@ -413,159 +430,365 @@ def create_visualizations(enh_interactions, comparison_results, null_model, outp
     
     print("\nCreating visualizations...")
     
-    fig = plt.figure(figsize=(20, 12))
-    gs = fig.add_gridspec(3, 4, hspace=0.35, wspace=0.35)
-    
-    # Plot 1: LogFC distribution vs null
-    ax1 = fig.add_subplot(gs[0, 0])
     null_logfc = pd.to_numeric(null_model['logFC'], errors='coerce').dropna()
     obs_logfc = pd.to_numeric(enh_interactions['logFC'], errors='coerce').dropna()
+    null_mean = null_logfc.mean()
     
-    ax1.hist(null_logfc, bins=50, alpha=0.5, label='Null model', color='lightblue', density=True)
-    ax1.hist(obs_logfc, bins=50, alpha=0.5, label='Enhancer interactions', color='salmon', density=True)
-    ax1.axvline(x=null_logfc.mean(), color='blue', linestyle='--', label=f'Null mean: {null_logfc.mean():.3f}')
-    ax1.axvline(x=obs_logfc.mean(), color='red', linestyle='--', label=f'Observed mean: {obs_logfc.mean():.3f}')
-    ax1.set_xlabel('LogFC')
-    ax1.set_ylabel('Density')
-    ax1.set_title('LogFC Distribution: Enhancers vs Null Model')
-    ax1.legend(fontsize=8)
-    ax1.grid(alpha=0.3)
+    # Get wMel-enriched and uninf-enriched interactions
+    wmel_enriched = enh_interactions[enh_interactions['logFC'] > 0].copy()
+    uninf_enriched = enh_interactions[enh_interactions['logFC'] < 0].copy()
     
-    # Plot 2: LogFC by enhancer class
-    ax2 = fig.add_subplot(gs[0, 1])
-    for contact_class in enh_interactions['contact_class'].unique():
-        class_data = enh_interactions[enh_interactions['contact_class'] == contact_class]
-        class_logfc = pd.to_numeric(class_data['logFC'], errors='coerce').dropna()
-        if len(class_logfc) > 0:
-            ax2.hist(class_logfc, bins=30, alpha=0.6, label=contact_class)
-    ax2.axvline(x=null_logfc.mean(), color='black', linestyle='--', alpha=0.5, label='Null mean')
-    ax2.set_xlabel('LogFC')
-    ax2.set_ylabel('Frequency')
-    ax2.set_title('LogFC Distribution by Enhancer Class')
-    ax2.legend(fontsize=8)
-    ax2.grid(alpha=0.3)
+    # PLOT 1: LogFC distribution wMel vs uninf vs null
+    print("  Creating plot 1: LogFC distribution comparison...")
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Plot 3: LogFC by interaction type
-    ax3 = fig.add_subplot(gs[0, 2])
-    for int_type in enh_interactions['interaction_type'].unique():
+    # Calculate statistics for comparison
+    t_stat_obs_null, p_obs_null = stats.ttest_ind(obs_logfc, null_logfc)
+    
+    ax.hist(null_logfc, bins=50, alpha=0.6, label=f'Null model (n={len(null_logfc)})', 
+            color=NULL_COLOR, density=True, edgecolor='black', linewidth=0.5)
+    ax.hist(obs_logfc, bins=50, alpha=0.7, label=f'Enhancer interactions (n={len(obs_logfc)})', 
+            color=WMEL_COLOR, density=True, edgecolor='black', linewidth=0.5)
+    
+    ax.axvline(x=null_mean, color=NULL_COLOR, linestyle='--', linewidth=2, 
+              label=f'Null mean: {null_mean:.3f}')
+    ax.axvline(x=obs_logfc.mean(), color=WMEL_COLOR, linestyle='--', linewidth=2, 
+              label=f'Observed mean: {obs_logfc.mean():.3f}')
+    
+    # Add p-value annotation
+    y_max = ax.get_ylim()[1]
+    ax.text(0.02, 0.98, f'Observed vs Null: {format_pvalue(p_obs_null)}', 
+           transform=ax.transAxes, fontsize=12, verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    ax.set_xlabel('Log2 Fold Change (wMel vs uninf)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Density', fontsize=12, fontweight='bold')
+    ax.set_title('LogFC Distribution: Enhancer Interactions vs Null Model', 
+                fontsize=14, fontweight='bold', pad=20)
+    ax.legend(fontsize=10, framealpha=0.9)
+    ax.grid(alpha=0.3, linestyle=':', linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_plot1_logfc_distribution.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # PLOT 2: LogFC by enhancer class with wMel/uninf split
+    print("  Creating plot 2: LogFC by enhancer class...")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    classes = sorted(enh_interactions['contact_class'].unique())
+    x_pos = np.arange(len(classes))
+    width = 0.35
+    
+    wmel_means = []
+    uninf_means = []
+    p_values = []
+    
+    for cls in classes:
+        class_data = enh_interactions[enh_interactions['contact_class'] == cls]
+        wmel_data = class_data[class_data['logFC'] > 0]['logFC']
+        uninf_data = class_data[class_data['logFC'] < 0]['logFC'].abs()
+        
+        wmel_means.append(wmel_data.mean() if len(wmel_data) > 0 else 0)
+        uninf_means.append(uninf_data.mean() if len(uninf_data) > 0 else 0)
+        
+        if len(wmel_data) > 0 and len(uninf_data) > 0:
+            _, p = stats.ttest_ind(wmel_data, uninf_data)
+            p_values.append(p)
+        else:
+            p_values.append(1.0)
+    
+    bars1 = ax.bar(x_pos - width/2, wmel_means, width, label='wMel-enriched', 
+                   color=WMEL_COLOR, alpha=0.8, edgecolor='black', linewidth=1.5)
+    bars2 = ax.bar(x_pos + width/2, uninf_means, width, label='Uninf-enriched', 
+                   color=UNINF_COLOR, alpha=0.8, edgecolor='black', linewidth=1.5)
+    
+    # Add p-value annotations
+    y_max = max(max(wmel_means), max(uninf_means)) * 1.1
+    for i, p in enumerate(p_values):
+        if p < 0.05:
+            y_pos = max(wmel_means[i], uninf_means[i]) + y_max * 0.05
+            ax.plot([i - width/2, i + width/2], [y_pos, y_pos], 'k-', linewidth=1)
+            ax.text(i, y_pos + y_max * 0.02, format_pvalue(p), 
+                   ha='center', fontsize=9, fontweight='bold')
+    
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(classes, fontsize=11)
+    ax.set_ylabel('Mean |LogFC|', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Enhancer Class', fontsize=12, fontweight='bold')
+    ax.set_title('LogFC by Enhancer Class: wMel vs Uninf', 
+                fontsize=14, fontweight='bold', pad=20)
+    ax.legend(fontsize=11, framealpha=0.9, loc='upper right')
+    ax.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_plot2_logfc_by_class.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # PLOT 3: LogFC by interaction type with wMel/uninf split
+    print("  Creating plot 3: LogFC by interaction type...")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    int_types = sorted(enh_interactions['interaction_type'].unique())
+    x_pos = np.arange(len(int_types))
+    
+    wmel_means = []
+    uninf_means = []
+    p_values = []
+    
+    for int_type in int_types:
         type_data = enh_interactions[enh_interactions['interaction_type'] == int_type]
-        type_logfc = pd.to_numeric(type_data['logFC'], errors='coerce').dropna()
-        if len(type_logfc) > 0:
-            ax3.hist(type_logfc, bins=30, alpha=0.6, label=int_type)
-    ax3.axvline(x=null_logfc.mean(), color='black', linestyle='--', alpha=0.5, label='Null mean')
-    ax3.set_xlabel('LogFC')
-    ax3.set_ylabel('Frequency')
-    ax3.set_title('LogFC Distribution by Interaction Type')
-    ax3.legend(fontsize=8)
-    ax3.grid(alpha=0.3)
+        wmel_data = type_data[type_data['logFC'] > 0]['logFC']
+        uninf_data = type_data[type_data['logFC'] < 0]['logFC'].abs()
+        
+        wmel_means.append(wmel_data.mean() if len(wmel_data) > 0 else 0)
+        uninf_means.append(uninf_data.mean() if len(uninf_data) > 0 else 0)
+        
+        if len(wmel_data) > 0 and len(uninf_data) > 0:
+            _, p = stats.ttest_ind(wmel_data, uninf_data)
+            p_values.append(p)
+        else:
+            p_values.append(1.0)
     
-    # Plot 4: Interaction counts
-    ax4 = fig.add_subplot(gs[0, 3])
-    count_data = enh_interactions.groupby(['interaction_type', 'contact_class']).size().unstack(fill_value=0)
-    count_data.plot(kind='bar', ax=ax4, width=0.8)
-    ax4.set_title('Enhancer Interaction Counts')
-    ax4.set_ylabel('Count')
-    ax4.set_xlabel('Interaction Type')
-    ax4.legend(title='Contact Class', fontsize=8)
-    ax4.grid(alpha=0.3, axis='y')
-    plt.setp(ax4.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    bars1 = ax.bar(x_pos - width/2, wmel_means, width, label='wMel-enriched', 
+                   color=WMEL_COLOR, alpha=0.8, edgecolor='black', linewidth=1.5)
+    bars2 = ax.bar(x_pos + width/2, uninf_means, width, label='Uninf-enriched', 
+                   color=UNINF_COLOR, alpha=0.8, edgecolor='black', linewidth=1.5)
+    
+    # Add p-value annotations
+    y_max = max(max(wmel_means), max(uninf_means)) * 1.1
+    for i, p in enumerate(p_values):
+        if p < 0.05:
+            y_pos = max(wmel_means[i], uninf_means[i]) + y_max * 0.05
+            ax.plot([i - width/2, i + width/2], [y_pos, y_pos], 'k-', linewidth=1)
+            ax.text(i, y_pos + y_max * 0.02, format_pvalue(p), 
+                   ha='center', fontsize=9, fontweight='bold')
+    
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(int_types, fontsize=11)
+    ax.set_ylabel('Mean |LogFC|', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Interaction Type', fontsize=12, fontweight='bold')
+    ax.set_title('LogFC by Interaction Type: wMel vs Uninf', 
+                fontsize=14, fontweight='bold', pad=20)
+    ax.legend(fontsize=11, framealpha=0.9, loc='upper right')
+    ax.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_plot3_logfc_by_interaction_type.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # PLOT 4: Interaction counts - wMel vs uninf
+    print("  Creating plot 4: Interaction counts...")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    count_data = pd.DataFrame({
+        'wMel-enriched': [
+            len(wmel_enriched[wmel_enriched['interaction_type'] == 'E-E']),
+            len(wmel_enriched[wmel_enriched['interaction_type'] == 'E-TSS'])
+        ],
+        'Uninf-enriched': [
+            len(uninf_enriched[uninf_enriched['interaction_type'] == 'E-E']),
+            len(uninf_enriched[uninf_enriched['interaction_type'] == 'E-TSS'])
+        ]
+    }, index=['E-E', 'E-TSS'])
+    
+    x_pos = np.arange(len(count_data.index))
+    bars1 = ax.bar(x_pos - width/2, count_data['wMel-enriched'], width, 
+                   label='wMel-enriched', color=WMEL_COLOR, alpha=0.8, 
+                   edgecolor='black', linewidth=1.5)
+    bars2 = ax.bar(x_pos + width/2, count_data['Uninf-enriched'], width, 
+                   label='Uninf-enriched', color=UNINF_COLOR, alpha=0.8, 
+                   edgecolor='black', linewidth=1.5)
+    
+    # Add value labels on bars
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{int(height)}',
+                   ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    # Chi-square test for each interaction type
+    for i, int_type in enumerate(['E-E', 'E-TSS']):
+        observed = [[count_data.loc[int_type, 'wMel-enriched'], 
+                    count_data.loc[int_type, 'Uninf-enriched']]]
+        if sum(observed[0]) > 0:
+            chi2, p, _, _ = stats.chi2_contingency([[observed[0][0], observed[0][1]], 
+                                                    [sum(count_data['wMel-enriched']) - observed[0][0],
+                                                     sum(count_data['Uninf-enriched']) - observed[0][1]]])
+            if p < 0.05:
+                y_max_local = max(count_data.loc[int_type])
+                ax.text(i, y_max_local * 1.1, format_pvalue(p), 
+                       ha='center', fontsize=9, fontweight='bold')
+    
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(count_data.index, fontsize=11)
+    ax.set_ylabel('Count', fontsize=12, fontweight='bold')
+    ax.set_xlabel('Interaction Type', fontsize=12, fontweight='bold')
+    ax.set_title('Enhancer Interaction Counts: wMel vs Uninf', 
+                fontsize=14, fontweight='bold', pad=20)
+    ax.legend(fontsize=11, framealpha=0.9, loc='upper right')
+    ax.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_plot4_interaction_counts.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
     
     if not comparison_results.empty:
-        # Plot 5: Effect sizes
-        ax5 = fig.add_subplot(gs[1, 0])
+        # PLOT 5: Effect sizes with significance
+        print("  Creating plot 5: Effect sizes...")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
         sig_data = comparison_results[comparison_results.get('any_significant', False)]
         nonsig_data = comparison_results[~comparison_results.get('any_significant', True)]
         
         if not sig_data.empty:
-            ax5.scatter(sig_data['deviation_from_null'], sig_data['effect_size'],
-                       c='red', s=100, alpha=0.7, label='Significant', edgecolors='black')
+            ax.scatter(sig_data['deviation_from_null'], sig_data['effect_size'],
+                       c=SIG_COLOR, s=150, alpha=0.8, label='Significant', 
+                       edgecolors='black', linewidth=2, zorder=3)
+            # Add labels for significant points
+            for idx, row in sig_data.iterrows():
+                ax.annotate(f"{row['interaction_type']}\n{row['contact_class']}\n{format_pvalue(row['p_value_t_test'])}", 
+                          (row['deviation_from_null'], row['effect_size']),
+                          xytext=(10, 10), textcoords='offset points',
+                          fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        
         if not nonsig_data.empty:
-            ax5.scatter(nonsig_data['deviation_from_null'], nonsig_data['effect_size'],
-                       c='gray', s=60, alpha=0.4, label='Not significant')
+            ax.scatter(nonsig_data['deviation_from_null'], nonsig_data['effect_size'],
+                       c=NONSIG_COLOR, s=80, alpha=0.5, label='Not significant',
+                       edgecolors='gray', linewidth=1)
         
-        ax5.axhline(y=0.5, color='orange', linestyle=':', alpha=0.5, label='Medium effect')
-        ax5.axhline(y=1.0, color='red', linestyle=':', alpha=0.5, label='Large effect')
-        ax5.axvline(x=0, color='black', linestyle='--', alpha=0.5)
-        ax5.set_xlabel('Deviation from Null Mean')
-        ax5.set_ylabel('Effect Size (standardized)')
-        ax5.set_title('Effect Sizes vs Null Model')
-        ax5.legend(fontsize=8)
-        ax5.grid(alpha=0.3)
+        ax.axhline(y=0.2, color='lightblue', linestyle=':', alpha=0.7, linewidth=2, label='Small effect')
+        ax.axhline(y=0.5, color='orange', linestyle=':', alpha=0.7, linewidth=2, label='Medium effect')
+        ax.axhline(y=1.0, color='red', linestyle=':', alpha=0.7, linewidth=2, label='Large effect')
+        ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1.5)
+        ax.axhline(y=0, color='black', linestyle='--', alpha=0.5, linewidth=1.5)
         
-        # Plot 6: P-values
-        ax6 = fig.add_subplot(gs[1, 1])
-        if 'p_value_t_test' in comparison_results.columns:
-            ax6.scatter(comparison_results['p_value_t_test'],
-                       comparison_results.get('p_value_z_test', comparison_results['p_value_t_test']),
-                       alpha=0.6, s=80, edgecolors='black', linewidths=0.5)
-            ax6.plot([1e-10, 1], [1e-10, 1], 'k--', alpha=0.5)
-            ax6.axhline(y=0.05, color='red', linestyle=':', alpha=0.5)
-            ax6.axvline(x=0.05, color='red', linestyle=':', alpha=0.5)
-            ax6.set_xlabel('P-value (T-test)')
-            ax6.set_ylabel('P-value (Z-test)')
-            ax6.set_title('P-value Comparison')
-            ax6.set_xscale('log')
-            ax6.set_yscale('log')
-            ax6.grid(alpha=0.3)
+        ax.set_xlabel('Deviation from Null Mean (LogFC)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Effect Size (standardized)', fontsize=12, fontweight='bold')
+        ax.set_title('Effect Sizes: Enhancer Classes vs Null Model', 
+                    fontsize=14, fontweight='bold', pad=20)
+        ax.legend(fontsize=10, framealpha=0.9, loc='best')
+        ax.grid(alpha=0.3, linestyle=':', linewidth=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
         
-        # Plot 7: Mean logFC by group
-        ax7 = fig.add_subplot(gs[1, 2])
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_plot5_effect_sizes.pdf", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # PLOT 6: Mean logFC by group with significance
+        print("  Creating plot 6: Mean logFC by group...")
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
         comparison_results['group'] = comparison_results['interaction_type'] + '\n' + comparison_results['contact_class']
-        colors = ['red' if sig else 'gray' for sig in comparison_results.get('any_significant', [False]*len(comparison_results))]
+        colors = [SIG_COLOR if sig else NONSIG_COLOR 
+                 for sig in comparison_results.get('any_significant', [False]*len(comparison_results))]
         
         x_pos = range(len(comparison_results))
-        ax7.bar(x_pos, comparison_results['mean_logfc'], color=colors, alpha=0.7, edgecolor='black')
-        ax7.axhline(y=comparison_results['null_mean'].iloc[0], color='black', 
-                   linestyle='--', linewidth=2, label='Null mean')
-        ax7.axhline(y=0.5, color='orange', linestyle=':', alpha=0.5)
-        ax7.axhline(y=-0.5, color='orange', linestyle=':', alpha=0.5)
-        ax7.set_xticks(x_pos)
-        ax7.set_xticklabels(comparison_results['group'], rotation=45, ha='right', fontsize=8)
-        ax7.set_ylabel('Mean LogFC')
-        ax7.set_title('Mean LogFC by Group')
-        ax7.legend(fontsize=8)
-        ax7.grid(alpha=0.3, axis='y')
+        bars = ax.bar(x_pos, comparison_results['mean_logfc'], color=colors, alpha=0.8, 
+                     edgecolor='black', linewidth=1.5)
         
-        # Plot 8: Confidence intervals
-        ax8 = fig.add_subplot(gs[1, 3])
+        # Add p-value annotations above bars
+        for i, (idx, row) in enumerate(comparison_results.iterrows()):
+            if row.get('any_significant', False):
+                height = row['mean_logfc']
+                ax.text(i, height + 0.05 if height > 0 else height - 0.05, 
+                       format_pvalue(row['p_value_t_test']),
+                       ha='center', va='bottom' if height > 0 else 'top', 
+                       fontsize=8, fontweight='bold')
+        
+        ax.axhline(y=comparison_results['null_mean'].iloc[0], color=NULL_COLOR, 
+                   linestyle='--', linewidth=2, label='Null mean', alpha=0.7)
+        ax.axhline(y=0.5, color='orange', linestyle=':', alpha=0.5, linewidth=1)
+        ax.axhline(y=-0.5, color='orange', linestyle=':', alpha=0.5, linewidth=1)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(comparison_results['group'], rotation=45, ha='right', fontsize=9)
+        ax.set_ylabel('Mean LogFC (wMel vs Uninf)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Interaction Type and Class', fontsize=12, fontweight='bold')
+        ax.set_title('Mean LogFC by Enhancer Group', 
+                    fontsize=14, fontweight='bold', pad=20)
+        
+        # Add legend patch for colors
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=SIG_COLOR, edgecolor='black', label='Significant'),
+            Patch(facecolor=NONSIG_COLOR, edgecolor='black', label='Not significant'),
+            plt.Line2D([0], [0], color=NULL_COLOR, linewidth=2, linestyle='--', label='Null mean')
+        ]
+        ax.legend(handles=legend_elements, fontsize=10, framealpha=0.9, loc='best')
+        ax.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_plot6_mean_logfc_by_group.pdf", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # PLOT 7: Confidence intervals
+        print("  Creating plot 7: Confidence intervals...")
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
         y_pos = range(len(comparison_results))
-        colors_ci = ['red' if sig else 'gray' for sig in comparison_results.get('any_significant', [False]*len(comparison_results))]
+        colors_ci = [SIG_COLOR if sig else NONSIG_COLOR 
+                    for sig in comparison_results.get('any_significant', [False]*len(comparison_results))]
         
         for i, (idx, row) in enumerate(comparison_results.iterrows()):
-            ax8.plot([row['ci_lower'], row['ci_upper']], [i, i], 
-                    color=colors_ci[i], linewidth=3, alpha=0.7)
-            ax8.scatter(row['mean_logfc'], i, color=colors_ci[i], s=80, 
-                       edgecolor='black', linewidths=1, zorder=3)
+            # Draw confidence interval line
+            ax.plot([row['ci_lower'], row['ci_upper']], [i, i], 
+                    color=colors_ci[i], linewidth=4, alpha=0.7, solid_capstyle='round')
+            # Draw mean point
+            ax.scatter(row['mean_logfc'], i, color=colors_ci[i], s=120, 
+                       edgecolor='black', linewidths=2, zorder=3)
+            # Add p-value text
+            if row.get('any_significant', False):
+                ax.text(row['ci_upper'] + 0.1, i, format_pvalue(row['p_value_t_test']),
+                       va='center', fontsize=8, fontweight='bold')
         
-        ax8.axvline(x=comparison_results['null_mean'].iloc[0], color='black', 
-                   linestyle='--', linewidth=2, label='Null mean')
-        ax8.set_yticks(y_pos)
-        ax8.set_yticklabels(comparison_results['group'], fontsize=8)
-        ax8.set_xlabel('LogFC')
-        ax8.set_title('95% Confidence Intervals')
-        ax8.legend(fontsize=8)
-        ax8.grid(alpha=0.3, axis='x')
+        ax.axvline(x=comparison_results['null_mean'].iloc[0], color=NULL_COLOR, 
+                   linestyle='--', linewidth=2, label='Null mean', alpha=0.7)
+        ax.axvline(x=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
         
-        # Plot 9: Effect size comparison
-        ax9 = fig.add_subplot(gs[2, :2])
-        groups = comparison_results['group']
-        x_pos = range(len(groups))
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(comparison_results['group'], fontsize=9)
+        ax.set_xlabel('LogFC (wMel vs Uninf)', fontsize=12, fontweight='bold')
+        ax.set_title('95% Confidence Intervals for Mean LogFC', 
+                    fontsize=14, fontweight='bold', pad=20)
         
-        ax9.bar(x_pos, comparison_results['effect_size'], color=colors, alpha=0.7, edgecolor='black')
-        ax9.axhline(y=0.2, color='blue', linestyle=':', alpha=0.5, label='Small effect')
-        ax9.axhline(y=0.5, color='orange', linestyle=':', alpha=0.5, label='Medium effect')
-        ax9.axhline(y=1.0, color='red', linestyle=':', alpha=0.5, label='Large effect')
-        ax9.set_xticks(x_pos)
-        ax9.set_xticklabels(groups, rotation=45, ha='right', fontsize=8)
-        ax9.set_ylabel('Effect Size (std from null)')
-        ax9.set_title('Effect Sizes Across Groups')
-        ax9.legend(fontsize=8)
-        ax9.grid(alpha=0.3, axis='y')
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=SIG_COLOR, edgecolor='black', label='Significant'),
+            Patch(facecolor=NONSIG_COLOR, edgecolor='black', label='Not significant'),
+            plt.Line2D([0], [0], color=NULL_COLOR, linewidth=2, linestyle='--', label='Null mean')
+        ]
+        ax.legend(handles=legend_elements, fontsize=10, framealpha=0.9, loc='best')
+        ax.grid(alpha=0.3, axis='x', linestyle=':', linewidth=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
         
-        # Plot 10: Summary barplot
-        ax10 = fig.add_subplot(gs[2, 2:])
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_plot7_confidence_intervals.pdf", dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # PLOT 8: Summary statistics
+        print("  Creating plot 8: Summary statistics...")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
         summary_data = {
             'Total\nInteractions': len(enh_interactions),
+            'wMel-enriched\n(logFC > 0)': len(wmel_enriched),
+            'Uninf-enriched\n(logFC < 0)': len(uninf_enriched),
             'E-E': sum(enh_interactions['interaction_type'] == 'E-E'),
             'E-TSS': sum(enh_interactions['interaction_type'] == 'E-TSS'),
             'Housekeeping': sum(enh_interactions['contact_class'] == 'housekeeping'),
@@ -573,23 +796,32 @@ def create_visualizations(enh_interactions, comparison_results, null_model, outp
             'Significant\nGroups': sum(comparison_results.get('any_significant', [False]*len(comparison_results)))
         }
         
-        ax10.bar(range(len(summary_data)), list(summary_data.values()), 
-                color=['steelblue', 'lightcoral', 'lightgreen', 'gold', 'plum', 'tomato'],
-                alpha=0.8, edgecolor='black')
-        ax10.set_xticks(range(len(summary_data)))
-        ax10.set_xticklabels(list(summary_data.keys()), rotation=45, ha='right')
-        ax10.set_ylabel('Count')
-        ax10.set_title('Summary Statistics')
-        ax10.grid(alpha=0.3, axis='y')
+        colors_summary = [WMEL_COLOR if 'wMel' in key else UNINF_COLOR if 'Uninf' in key 
+                         else SIG_COLOR if 'Significant' in key else '#7fa8d1' 
+                         for key in summary_data.keys()]
+        
+        bars = ax.bar(range(len(summary_data)), list(summary_data.values()), 
+                color=colors_summary, alpha=0.8, edgecolor='black', linewidth=1.5)
+        
+        ax.set_xticks(range(len(summary_data)))
+        ax.set_xticklabels(list(summary_data.keys()), rotation=45, ha='right', fontsize=10)
+        ax.set_ylabel('Count', fontsize=12, fontweight='bold')
+        ax.set_title('Summary Statistics: Enhancer Interactions', 
+                    fontsize=14, fontweight='bold', pad=20)
+        ax.grid(alpha=0.3, axis='y', linestyle=':', linewidth=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
         
         # Add values on bars
         for i, (key, val) in enumerate(summary_data.items()):
-            ax10.text(i, val, str(val), ha='center', va='bottom', fontweight='bold')
+            ax.text(i, val, str(val), ha='center', va='bottom', 
+                   fontweight='bold', fontsize=11)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_plot8_summary_statistics.pdf", dpi=300, bbox_inches='tight')
+        plt.close()
     
-    plt.savefig(f"{output_prefix}_comprehensive_analysis.pdf", dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Plots saved to {output_prefix}_comprehensive_analysis.pdf")
+    print(f"\nAll plots saved with prefix: {output_prefix}_plot*.pdf")
 
 
 def create_report(enh_interactions, comparison_results, null_model, null_stats, output_prefix):
@@ -598,7 +830,7 @@ def create_report(enh_interactions, comparison_results, null_model, null_stats, 
     with open(f"{output_prefix}_analysis_report.txt", 'w') as f:
         f.write("="*80 + "\n")
         f.write("ENHANCER CLASS ANALYSIS REPORT\n")
-        f.write("wMel vs DOX Comparison\n")
+        f.write("wMel vs Uninf (DOX) Comparison\n")
         f.write("="*80 + "\n\n")
         
         # Null model
@@ -614,6 +846,13 @@ def create_report(enh_interactions, comparison_results, null_model, null_stats, 
         f.write("ENHANCER INTERACTIONS SUMMARY\n")
         f.write("-"*80 + "\n")
         f.write(f"Total enhancer interactions: {len(enh_interactions)}\n")
+        
+        wmel_enriched = len(enh_interactions[enh_interactions['logFC'] > 0])
+        uninf_enriched = len(enh_interactions[enh_interactions['logFC'] < 0])
+        
+        f.write(f"wMel-enriched (logFC > 0): {wmel_enriched} ({100*wmel_enriched/len(enh_interactions):.1f}%)\n")
+        f.write(f"Uninf-enriched (logFC < 0): {uninf_enriched} ({100*uninf_enriched/len(enh_interactions):.1f}%)\n\n")
+        
         f.write(f"E-E interactions: {sum(enh_interactions['interaction_type'] == 'E-E')}\n")
         f.write(f"E-TSS interactions: {sum(enh_interactions['interaction_type'] == 'E-TSS')}\n\n")
         
@@ -684,14 +923,14 @@ def create_report(enh_interactions, comparison_results, null_model, null_stats, 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Enhancer class analysis for wMel vs DOX comparison',
+        description='Enhancer class analysis for wMel vs uninf (DOX) comparison',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument('--enhancers', required=True,
                        help='Enhancer BED file')
     parser.add_argument('--interactions', required=True,
-                       help='Differential interactions CSV (wMel vs DOX)')
+                       help='Differential interactions CSV (wMel vs uninf)')
     parser.add_argument('--null_model', required=True,
                        help='Null model CSV from diffHic')
     parser.add_argument('--classification',
@@ -704,7 +943,7 @@ def main():
     args = parser.parse_args()
     
     print("\n" + "="*80)
-    print("ENHANCER CLASS ANALYSIS: wMel vs DOX")
+    print("ENHANCER CLASS ANALYSIS: wMel vs Uninf (DOX)")
     print("="*80 + "\n")
     
     # Load data
@@ -753,6 +992,7 @@ def main():
     print("ANALYSIS COMPLETE!")
     print("="*80)
     print(f"\nResults written to: {args.output_prefix}*")
+    print(f"Individual plots saved as: {args.output_prefix}_plot1.pdf through plot8.pdf")
 
 
 if __name__ == '__main__':
