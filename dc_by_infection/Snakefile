@@ -54,7 +54,8 @@ rule all:
         f"{output_dir}/insulator_analysis/insulator_summary.txt",
 
         f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
-        f"{output_dir}/insulator_analysis/ndf_interaction_check.txt"
+        f"{output_dir}/insulator_analysis/ndf_interaction_check.txt",
+        f"{output_dir}/X_insulator_analysis/insulator_summary.txt",
 
 
 
@@ -204,7 +205,7 @@ rule X_chrom_diffhic_analysis:
         --fdr=0.05
         '''
 
-# Insulator enrichment analysis with permutation testing
+# Insulator enrichment analysis with permutation testing # This is for the whole genome, not just X chromosome
 rule insulator_contact_analysis:
     input:
         interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
@@ -242,6 +243,46 @@ rule insulator_contact_analysis:
             --fdr_threshold {params.fdr_threshold} \
             --output_prefix {params.output_prefix}
         '''
+
+# Insulator enrichment analysis with permutation testing # This is for just the X chromosome
+rule X_insulator_contact_analysis:
+    input:
+        interactions = f"{output_dir}/X_diffhic/comprehensive_tables/all_sig_interactions_combined.csv",    
+        null_model = f"{output_dir}/X_diffhic/res_8000/null_model_results.csv",
+        class_i = insulator_class_i,
+        class_ii = insulator_class_ii,
+        genome = genome_file
+    output:
+        summary = f"{output_dir}/X_insulator_analysis/insulator_summary.txt",
+        interactions = f"{output_dir}/X_insulator_analysis/insulator_interactions.csv",
+        plot = f"{output_dir}/X_insulator_analysis/insulator_analysis.pdf",
+        summary_csv = f"{output_dir}/X_insulator_analysis/insulator_summary.csv"
+    params:
+        window_size = 1000,  # 10kb window for insulator effects
+        n_permutations = 100,  # Number of permutations
+        fdr_threshold = 0.05,
+        output_prefix = f"{output_dir}/X_insulator_analysis/insulator"
+    resources:
+        mem_mb = 64000,
+        runtime = 720  # Permutation testing takes longer
+    threads: 64
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/insulator_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --class_i {input.class_i} \
+            --class_ii {input.class_ii} \
+            --genome {input.genome} \
+            --window_size {params.window_size} \
+            --n_permutations {params.n_permutations} \
+            --fdr_threshold {params.fdr_threshold} \
+            --output_prefix {params.output_prefix}
+        '''
+
 
 # Optional: Check specific interaction mentioned in your notes
 # Add this as a separate rule if you want to check the NDF interaction specifically
