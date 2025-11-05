@@ -1,0 +1,5 @@
+# Data accessed from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE130334
+# Citation: Samata M, Alexiadis A, Richard G, Georgiev P et al. Intergenerationally Maintained Histone H4 Lysine 16 Acetylation Is Instructive for Future Gene Activation. Cell 2020 Jul 9;182(1):127-144.e23. PMID: 32502394
+
+# To convert to bed
+bigWigToBedGraph GSE130334_st15_H4K16ac_controlRNAi_log2Input_min140_ext_rep3.bw GSE130334_st15_H4K16ac_controlRNAi_log2Input_min140_ext_rep3.bed
