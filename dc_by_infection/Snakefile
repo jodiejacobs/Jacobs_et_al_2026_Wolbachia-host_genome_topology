@@ -29,6 +29,8 @@ insulator_class_i = f"resources/Insulators/Insulator_Class_I_dm6.bed"
 insulator_class_ii = f"resources/Insulators/Insulator_Class_II_dm6.bed"
 has_ces_sites = f"resources/HAS_CES/HAS_sites_dm6.journal.pgen.1000302.bed"
 h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6.bed"
+h4k16ac_peaks = f"resources/H4K16ac/GSE130334_H4K16ac.bed"
+
 
 # Conda environments
 COOLER_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
@@ -387,6 +389,40 @@ rule h3k36me3_contact_analysis:
             --fdr_threshold {params.fdr_threshold} \
             --output_prefix {params.output_prefix}
         '''
+
+# H4K16ac enrichment analysis at X chromosome contacts
+rule h4k16ac_contact_analysis:
+    input:
+        interactions = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        h4k16ac_peaks = h4k16ac_peaks
+    output:
+        summary = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.txt",
+        interactions = f"{output_dir}/h4k16ac_analysis/h4k16ac_interactions.csv",
+        plot = f"{output_dir}/h4k16ac_analysis/h4k16ac_analysis.pdf",
+        summary_csv = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.csv"
+    params:
+        window_size = 5000,  # Match your HAS analysis window
+        fdr_threshold = 0.05,
+        output_prefix = f"{output_dir}/h4k16ac_analysis/"
+    resources:
+        mem_mb = 64000,
+        runtime = 120
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {PYTHON_ENV}
+        
+        python scripts/h3k36me3_contact_analysis.py \
+            --interactions {input.interactions} \
+            --null_model {input.null_model} \
+            --h4k16ac_peaks {input.h4k16ac_peaks} \
+            --window_size {params.window_size} \
+            --fdr_threshold {params.fdr_threshold} \
+            --output_prefix {params.output_prefix}
+        '''
+
 # Chromatin structure analysis using cooltools
 rule chromatin_structure_analysis:
     input:
