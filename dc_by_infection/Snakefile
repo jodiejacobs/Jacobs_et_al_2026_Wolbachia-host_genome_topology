@@ -47,6 +47,7 @@ rule all:
     
         # Enhancer class analysis
         f"{output_dir}/enhancer_analysis/enhancer_enhancer_interactions.tsv",
+        f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
         
         # X chromosome analysis (with null comparisons)
         f"{output_dir}/x_analysis/x_chromosome_summary.tsv",
