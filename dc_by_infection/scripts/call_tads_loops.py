@@ -388,8 +388,9 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
     """
     Compare compartment changes between conditions with corrected statistical testing.
     
-    CORRECTED: Now uses proper permutation tests for E1 differences and paired tests
-    for compartment switches, instead of incorrectly comparing E1 values to logFC null model.
+    CORRECTED V4: Uses a genome-wide empirical null distribution approach.
+    For each bin, we ask: "Is this E1 change larger than the typical variation 
+    across all bins?" Uses the distribution of absolute E1 differences as the null.
     """
     print("\nComparing compartment changes...")
     
@@ -428,66 +429,39 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         # Identify compartment switches
         merged['switch'] = merged['compartment_uninf'] != merged['compartment_inf']
         merged['E1_diff'] = merged['E1_inf'] - merged['E1_uninf']
+        merged['abs_E1_diff'] = np.abs(merged['E1_diff'])
         
         print(f"  Testing {len(merged)} bins for {infected_condition}...")
         
-        # ========== CORRECTED STATISTICAL TESTING ==========
+        # ========== EMPIRICAL NULL DISTRIBUTION APPROACH ==========
         
         # 1. Global test: Use paired t-test for E1 differences
         t_stat, global_p_value = stats.ttest_rel(merged['E1_inf'], merged['E1_uninf'])
         
         print(f"    Global E1 change: t={t_stat:.3f}, p={global_p_value:.3e}")
         
-        # 2. Per-bin significance using permutation test
-        # Build empirical null distribution from non-switching bins
-        non_switched = merged[merged['switch'] == False]
-        switched = merged[merged['switch'] == True]
+        # 2. Build empirical null distribution from ALL E1 differences
+        # The null hypothesis is: "This bin's E1 change is not unusual compared to 
+        # the distribution of all E1 changes genome-wide"
         
-        print(f"    {len(switched)} bins switched compartments ({len(switched)/len(merged)*100:.1f}%)")
+        # Use the genome-wide distribution of absolute E1 differences as null
+        all_abs_diffs = merged['abs_E1_diff'].values
         
-        if len(non_switched) > 10:
-            # Use non-switching bins as null distribution
-            null_e1_diffs = non_switched['E1_diff'].values
-            null_mean = np.mean(null_e1_diffs)
-            null_std = np.std(null_e1_diffs)
+        # Calculate percentile rank for each bin
+        bin_p_values = []
+        for abs_diff in all_abs_diffs:
+            # What percentile is this absolute difference in the genome-wide distribution?
+            # Higher percentile = more extreme = more significant
+            percentile = stats.percentileofscore(all_abs_diffs, abs_diff, kind='weak')
             
-            print(f"    Null E1_diff: mean={null_mean:.4f}, std={null_std:.4f}")
+            # Convert to p-value: 
+            # If in top 5% of differences, p = 0.05
+            # If in top 1% of differences, p = 0.01
+            p_val = (100 - percentile) / 100
             
-            # Calculate p-values for each bin based on how extreme their E1_diff is
-            bin_p_values = []
-            for _, row in merged.iterrows():
-                e1_diff = row['E1_diff']
-                # Calculate percentile in null distribution
-                percentile = stats.percentileofscore(null_e1_diffs, abs(e1_diff))
-                # Two-tailed p-value
-                p_val = 2 * (1 - percentile / 100) if percentile > 50 else 2 * (percentile / 100)
-                p_val = max(p_val, 1e-10)  # Avoid exactly 0
-                bin_p_values.append(p_val)
-        else:
-            # Fall back to z-test if we don't have enough non-switching bins
-            print(f"    Warning: Only {len(non_switched)} non-switching bins, using permutation test")
-            
-            # Permutation test for each bin
-            n_permutations = 1000
-            bin_p_values = []
-            
-            all_e1_values = np.concatenate([merged['E1_uninf'].values, merged['E1_inf'].values])
-            
-            for _, row in merged.iterrows():
-                observed_diff = row['E1_diff']
-                
-                # Generate null distribution by random permutation
-                null_diffs = []
-                for _ in range(n_permutations):
-                    perm = np.random.permutation(all_e1_values)
-                    n = len(merged)
-                    null_diff = perm[n:].mean() - perm[:n].mean()
-                    null_diffs.append(null_diff)
-                
-                null_diffs = np.array(null_diffs)
-                p_val = np.sum(np.abs(null_diffs) >= np.abs(observed_diff)) / n_permutations
-                p_val = max(p_val, 1/n_permutations)  # Minimum achievable p-value
-                bin_p_values.append(p_val)
+            # Ensure minimum p-value
+            p_val = max(p_val, 1/len(all_abs_diffs))
+            bin_p_values.append(p_val)
         
         merged['p_value'] = bin_p_values
         
@@ -500,10 +474,7 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         total_bins = len(merged)
         switch_rate = observed_switches / total_bins
         
-        # Test against null expectation of 25% (random A/B assignment would give 50% same, 50% different,
-        # but we only count switches in one direction, so 25% for A->B and 25% for B->A)
-        # Actually, for independent 50/50 A/B in each condition: P(switch) = 2 * 0.5 * 0.5 = 0.5
-        # Use 0.5 as null expectation
+        # Test against null expectation of 0.5 (random independent assignment)
         switch_p_value = stats.binom_test(observed_switches, total_bins, 0.5, alternative='two-sided')
         
         merged['comparison'] = f"{ref_condition}_vs_{infected_condition}"
@@ -514,7 +485,10 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         comparison_results.append(merged)
         
         n_sig = merged['significant'].sum()
-        print(f"    {n_sig} bins significant at FDR < {fdr_threshold}")
+        print(f"    {n_sig} bins significant at FDR < {fdr_threshold} ({n_sig/total_bins*100:.1f}%)")
+        print(f"    P-value range: [{np.min(bin_p_values):.4f}, {np.max(bin_p_values):.4f}]")
+        print(f"    Mean p-value: {np.mean(bin_p_values):.3f}, median: {np.median(bin_p_values):.3f}")
+        print(f"    E1_diff range: [{merged['E1_diff'].min():.3f}, {merged['E1_diff'].max():.3f}]")
         print(f"    Switch rate: {switch_rate:.2%}, p={switch_p_value:.3e}")
         print(f"    Global E1 test: p={global_p_value:.3e}")
     
