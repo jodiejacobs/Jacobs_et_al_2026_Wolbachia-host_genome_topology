@@ -386,11 +386,10 @@ def calculate_compartments_all_conditions(mcool_files, conditions, chromosomes,
 
 def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_threshold=0.05):
     """
-    Compare compartment changes between conditions with corrected statistical testing.
+    Compare compartment changes between conditions - SIMPLIFIED VERSION.
     
-    CORRECTED V4: Uses a genome-wide empirical null distribution approach.
-    For each bin, we ask: "Is this E1 change larger than the typical variation 
-    across all bins?" Uses the distribution of absolute E1 differences as the null.
+    Uses a simple approach: bins with large absolute E1 changes are significant.
+    Tests each bin's E1 change against the genome-wide mean and SD using z-scores.
     """
     print("\nComparing compartment changes...")
     
@@ -431,50 +430,47 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         merged['E1_diff'] = merged['E1_inf'] - merged['E1_uninf']
         merged['abs_E1_diff'] = np.abs(merged['E1_diff'])
         
+        # Remove bins with missing E1 values
+        n_before = len(merged)
+        merged = merged.dropna(subset=['E1_uninf', 'E1_inf', 'E1_diff'])
+        n_after = len(merged)
+        if n_before != n_after:
+            print(f"    Removed {n_before - n_after} bins with missing E1 values ({(n_before-n_after)/n_before*100:.1f}%)")
+        
+        if len(merged) == 0:
+            print(f"    Warning: No valid bins remaining after filtering NaNs")
+            continue
+        
         print(f"  Testing {len(merged)} bins for {infected_condition}...")
         
-        # ========== EMPIRICAL NULL DISTRIBUTION APPROACH ==========
+        # ========== SIMPLE Z-SCORE TEST ==========
         
-        # 1. Global test: Use paired t-test for E1 differences
+        # 1. Global test: paired t-test
         t_stat, global_p_value = stats.ttest_rel(merged['E1_inf'], merged['E1_uninf'])
-        
         print(f"    Global E1 change: t={t_stat:.3f}, p={global_p_value:.3e}")
         
-        # 2. Build empirical null distribution from ALL E1 differences
-        # The null hypothesis is: "This bin's E1 change is not unusual compared to 
-        # the distribution of all E1 changes genome-wide"
+        # 2. Simple approach: Calculate z-scores for each bin's absolute E1 change
+        # Bins with unusually large changes (high |z-score|) are significant
         
-        # Use the genome-wide distribution of absolute E1 differences as null
-        all_abs_diffs = merged['abs_E1_diff'].values
+        mean_abs_diff = merged['abs_E1_diff'].mean()
+        std_abs_diff = merged['abs_E1_diff'].std()
         
-        # Calculate percentile rank for each bin
-        bin_p_values = []
-        for abs_diff in all_abs_diffs:
-            # What percentile is this absolute difference in the genome-wide distribution?
-            # Higher percentile = more extreme = more significant
-            percentile = stats.percentileofscore(all_abs_diffs, abs_diff, kind='weak')
-            
-            # Convert to p-value: 
-            # If in top 5% of differences, p = 0.05
-            # If in top 1% of differences, p = 0.01
-            p_val = (100 - percentile) / 100
-            
-            # Ensure minimum p-value
-            p_val = max(p_val, 1/len(all_abs_diffs))
-            bin_p_values.append(p_val)
+        print(f"    Mean |E1_diff|: {mean_abs_diff:.4f}, SD: {std_abs_diff:.4f}")
         
-        merged['p_value'] = bin_p_values
+        # Calculate z-scores
+        merged['z_score'] = (merged['abs_E1_diff'] - mean_abs_diff) / std_abs_diff
         
-        # FDR correction using Benjamini-Hochberg
+        # Convert z-scores to two-tailed p-values
+        merged['p_value'] = 2 * (1 - stats.norm.cdf(np.abs(merged['z_score'])))
+        
+        # FDR correction
         _, merged['fdr'], _, _ = multipletests(merged['p_value'], method='fdr_bh')
         merged['significant'] = merged['fdr'] < fdr_threshold
         
-        # 3. Test compartment switch rate using binomial test
+        # 3. Compartment switch test
         observed_switches = merged['switch'].sum()
         total_bins = len(merged)
         switch_rate = observed_switches / total_bins
-        
-        # Test against null expectation of 0.5 (random independent assignment)
         switch_p_value = stats.binom_test(observed_switches, total_bins, 0.5, alternative='two-sided')
         
         merged['comparison'] = f"{ref_condition}_vs_{infected_condition}"
@@ -486,11 +482,10 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         
         n_sig = merged['significant'].sum()
         print(f"    {n_sig} bins significant at FDR < {fdr_threshold} ({n_sig/total_bins*100:.1f}%)")
-        print(f"    P-value range: [{np.min(bin_p_values):.4f}, {np.max(bin_p_values):.4f}]")
-        print(f"    Mean p-value: {np.mean(bin_p_values):.3f}, median: {np.median(bin_p_values):.3f}")
+        print(f"    P-value range: [{merged['p_value'].min():.4f}, {merged['p_value'].max():.4f}]")
+        print(f"    Top 5 most significant bins have |E1_diff| >= {merged.nsmallest(5, 'p_value')['abs_E1_diff'].min():.3f}")
         print(f"    E1_diff range: [{merged['E1_diff'].min():.3f}, {merged['E1_diff'].max():.3f}]")
         print(f"    Switch rate: {switch_rate:.2%}, p={switch_p_value:.3e}")
-        print(f"    Global E1 test: p={global_p_value:.3e}")
     
     if comparison_results:
         return pd.concat(comparison_results, ignore_index=True)
@@ -675,6 +670,224 @@ def compare_loops_to_null(loop_data, null_model, conditions, fdr_threshold=0.05)
     
     return pd.DataFrame(comparison_results)
 
+def create_compartment_switch_plots(compartment_comp, output_prefix):
+    """
+    Create detailed plots for compartment switches including:
+    - Bar plot of significant A->B vs B->A switches
+    - Bar plot of % changed vs unchanged (significant only)
+    - Statistical test of switch rate vs null
+    - Chromosome-level breakdown of switches by direction
+    """
+    if compartment_comp.empty:
+        print("No compartment comparison data to plot")
+        return
+    
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    
+    for comparison in compartment_comp['comparison'].unique():
+        data = compartment_comp[compartment_comp['comparison'] == comparison]
+        sig_data = data[data['significant']]
+        not_sig_data = data[~data['significant']]
+        
+        # Extract comparison name for labeling
+        comp_name = comparison.replace('_vs_', ' vs ')
+        
+        # Plot 1: Significant A->B vs B->A switches
+        ax = axes[0, 0]
+        if len(sig_data) > 0:
+            # Count direction of switches
+            a_to_b = sig_data[(sig_data['compartment_uninf'] == 'A') & 
+                             (sig_data['compartment_inf'] == 'B')].shape[0]
+            b_to_a = sig_data[(sig_data['compartment_uninf'] == 'B') & 
+                             (sig_data['compartment_inf'] == 'A')].shape[0]
+            no_switch_sig = sig_data[~sig_data['switch']].shape[0]
+            
+            categories = ['A→B', 'B→A', 'No Switch']
+            counts = [a_to_b, b_to_a, no_switch_sig]
+            colors = ['#e74c3c', '#3498db', '#95a5a6']
+            
+            ax.bar(categories, counts, color=colors, alpha=0.8, edgecolor='black')
+            ax.set_ylabel('Number of Significant Bins')
+            ax.set_title(f'Significant Compartment Changes\n{comp_name}')
+            
+            # Add count labels on bars
+            for i, (cat, count) in enumerate(zip(categories, counts)):
+                ax.text(i, count, str(count), ha='center', va='bottom', fontweight='bold')
+        
+        # Plot 2: % Changed vs Unchanged (significant only)
+        ax = axes[0, 1]
+        if len(sig_data) > 0:
+            switched = sig_data[sig_data['switch']].shape[0]
+            not_switched = sig_data[~sig_data['switch']].shape[0]
+            
+            total_sig = switched + not_switched
+            pct_switched = (switched / total_sig * 100) if total_sig > 0 else 0
+            pct_not_switched = (not_switched / total_sig * 100) if total_sig > 0 else 0
+            
+            categories = ['Switched', 'Unchanged']
+            percentages = [pct_switched, pct_not_switched]
+            colors = ['#e67e22', '#2ecc71']
+            
+            bars = ax.bar(categories, percentages, color=colors, alpha=0.8, edgecolor='black')
+            ax.set_ylabel('Percentage (%)')
+            ax.set_title(f'Significant Bins: Changed vs Unchanged\n{comp_name}')
+            ax.set_ylim([0, 100])
+            
+            # Add percentage labels
+            for bar, pct in zip(bars, percentages):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{pct:.1f}%', ha='center', va='bottom', fontweight='bold')
+        
+        # Plot 3: Chromosome-level switches by direction
+        ax = axes[0, 2]
+        if len(sig_data) > 0:
+            # Get chromosome order
+            chrom_order = ['2L', '2R', '3L', '3R', '4', 'X']
+            chroms_present = [c for c in chrom_order if c in sig_data['chrom'].unique()]
+            
+            # Count A->B and B->A for each chromosome
+            a_to_b_by_chrom = []
+            b_to_a_by_chrom = []
+            
+            for chrom in chroms_present:
+                chrom_data = sig_data[sig_data['chrom'] == chrom]
+                a_to_b = chrom_data[(chrom_data['compartment_uninf'] == 'A') & 
+                                   (chrom_data['compartment_inf'] == 'B')].shape[0]
+                b_to_a = chrom_data[(chrom_data['compartment_uninf'] == 'B') & 
+                                   (chrom_data['compartment_inf'] == 'A')].shape[0]
+                a_to_b_by_chrom.append(a_to_b)
+                b_to_a_by_chrom.append(b_to_a)
+            
+            x = np.arange(len(chroms_present))
+            width = 0.35
+            
+            ax.bar(x - width/2, a_to_b_by_chrom, width, label='A→B', 
+                  color='#e74c3c', alpha=0.8, edgecolor='black')
+            ax.bar(x + width/2, b_to_a_by_chrom, width, label='B→A', 
+                  color='#3498db', alpha=0.8, edgecolor='black')
+            
+            ax.set_xlabel('Chromosome')
+            ax.set_ylabel('Number of Significant Switches')
+            ax.set_title(f'Switches by Chromosome\n{comp_name}')
+            ax.set_xticks(x)
+            ax.set_xticklabels(chroms_present)
+            ax.legend()
+        
+        # Plot 4: E1 difference distributions for switched vs non-switched
+        ax = axes[1, 0]
+        if len(sig_data) > 0:
+            switched_e1 = sig_data[sig_data['switch']]['abs_E1_diff']
+            not_switched_e1 = sig_data[~sig_data['switch']]['abs_E1_diff']
+            
+            ax.hist(switched_e1, bins=30, alpha=0.6, label='Switched', color='#e67e22', edgecolor='black')
+            ax.hist(not_switched_e1, bins=30, alpha=0.6, label='Unchanged', color='#2ecc71', edgecolor='black')
+            ax.set_xlabel('|E1 Difference|')
+            ax.set_ylabel('Count')
+            ax.set_title(f'E1 Changes in Significant Bins\n{comp_name}')
+            ax.legend()
+        
+        # Plot 5: Comparison of switch rates (significant vs not significant)
+        ax = axes[1, 1]
+        
+        # Calculate switch rates
+        sig_switched = sig_data[sig_data['switch']].shape[0]
+        sig_invariant = sig_data[~sig_data['switch']].shape[0]
+        not_sig_switched = not_sig_data[not_sig_data['switch']].shape[0]
+        not_sig_invariant = not_sig_data[~not_sig_data['switch']].shape[0]
+        
+        sig_switch_rate = sig_switched / (sig_switched + sig_invariant) if (sig_switched + sig_invariant) > 0 else 0
+        not_sig_switch_rate = not_sig_switched / (not_sig_switched + not_sig_invariant) if (not_sig_switched + not_sig_invariant) > 0 else 0
+        
+        categories = ['Significant Bins', 'Non-Significant Bins']
+        switch_rates = [sig_switch_rate * 100, not_sig_switch_rate * 100]
+        colors = ['#e67e22', '#95a5a6']
+        
+        bars = ax.bar(categories, switch_rates, color=colors, alpha=0.8, edgecolor='black')
+        ax.set_ylabel('Switch Rate (%)')
+        ax.set_title(f'Switch Rate: Significant vs Non-Significant\n{comp_name}')
+        ax.set_ylim([0, 100])
+        
+        # Add percentage labels
+        for bar, rate in zip(bars, switch_rates):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{rate:.1f}%', ha='center', va='bottom', fontweight='bold')
+        
+        # Plot 6: Statistical summary table
+        ax = axes[1, 2]
+        ax.axis('off')
+        
+        if len(sig_data) > 0:
+            # Calculate statistics
+            total_bins = len(data)
+            n_significant = len(sig_data)
+            
+            # Switch rate calculation: significant_switched / significant_invariant
+            switch_rate_sig = sig_switched / sig_invariant if sig_invariant > 0 else float('inf')
+            switch_rate_not_sig = not_sig_switched / not_sig_invariant if not_sig_invariant > 0 else float('inf')
+            
+            # Test: Is switch rate different between significant and non-significant bins?
+            # Use Fisher's exact test for 2x2 contingency table:
+            #                   Switched  |  Invariant
+            # Significant:      sig_sw    |  sig_inv
+            # Not Significant:  not_sw    |  not_inv
+            
+            from scipy.stats import fisher_exact
+            contingency_table = [[sig_switched, sig_invariant],
+                               [not_sig_switched, not_sig_invariant]]
+            odds_ratio, fisher_p = fisher_exact(contingency_table)
+            
+            # Also test if significant bins are enriched for switches vs 50%
+            binom_p_sig = stats.binom_test(sig_switched, sig_switched + sig_invariant, 0.5, alternative='two-sided')
+            
+            # Create summary text
+            summary_text = [
+                f"Statistical Summary - {comp_name}",
+                "="*50,
+                f"Total bins: {total_bins}",
+                f"Significant bins: {n_significant} ({n_significant/total_bins*100:.1f}%)",
+                "",
+                "Significant Bins:",
+                f"  Switched: {sig_switched}",
+                f"  Invariant: {sig_invariant}",
+                f"  Switch rate: {sig_switch_rate*100:.1f}%",
+                f"  Ratio (sw/inv): {switch_rate_sig:.3f}" if sig_invariant > 0 else "  Ratio: undefined",
+                "",
+                "Non-Significant Bins:",
+                f"  Switched: {not_sig_switched}",
+                f"  Invariant: {not_sig_invariant}",
+                f"  Switch rate: {not_sig_switch_rate*100:.1f}%",
+                f"  Ratio (sw/inv): {switch_rate_not_sig:.3f}" if not_sig_invariant > 0 else "  Ratio: undefined",
+                "",
+                "Statistical Tests:",
+                f"  Fisher's exact test:",
+                f"    Odds ratio: {odds_ratio:.3f}",
+                f"    p-value: {fisher_p:.3e}",
+                f"    → {'NOT significant' if fisher_p > 0.05 else 'SIGNIFICANT'}",
+                "",
+                f"  Sig bins vs 50% null:",
+                f"    p-value: {binom_p_sig:.3e}",
+                f"    → {'NOT significant' if binom_p_sig > 0.05 else 'SIGNIFICANT'}",
+            ]
+            
+            # Add text to plot
+            ax.text(0.05, 0.95, '\n'.join(summary_text), 
+                   transform=ax.transAxes, fontsize=8, verticalalignment='top',
+                   fontfamily='monospace', bbox=dict(boxstyle='round', 
+                   facecolor='wheat', alpha=0.5))
+            
+            # Print to console as well
+            print("\n" + "="*60)
+            for line in summary_text:
+                print(line)
+            print("="*60)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_compartment_switches.pdf", dpi=300, bbox_inches='tight')
+    print(f"\nSaved compartment switch plots: {output_prefix}_compartment_switches.pdf")
+    plt.close()
+
 def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_prefix):
     """
     Create summary visualizations for all comparisons.
@@ -850,7 +1063,7 @@ def main():
                        help='Resolution for compartment analysis')
     parser.add_argument('--resolution_loop', type=int, default=5000,
                        help='Resolution for loop calling')
-    parser.add_argument('--fdr_threshold', type=float, default=0.05,
+    parser.add_argument('--fdr_threshold', type=float, default=0.1,
                        help='FDR threshold for significance')
     parser.add_argument('--tad_window_size', type=int, default=50000,
                        help='Window size for TAD boundary identification')
@@ -917,6 +1130,10 @@ def main():
     print("CREATING VISUALIZATIONS")
     print("="*60)
     
+    # Create detailed compartment switch plots
+    create_compartment_switch_plots(compartment_comparison, args.output_prefix)
+    
+    # Create summary plots
     create_summary_plots(
         tad_comparison, compartment_comparison, loop_comparison,
         args.output_prefix
