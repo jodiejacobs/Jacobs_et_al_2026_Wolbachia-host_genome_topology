@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Analyze H3K36me3 enrichment at differential chromatin contacts on the X chromosome.
-Compares real differential interactions vs null model to assess significance.
+Compares real differential interactions vs permutation-based null model to assess significance.
 
 Based on:
 - Fei et al. - NDF associates with MSL complex via H3K36me3
@@ -125,26 +125,12 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
     
     return sig_x, x_interactions
 
-def load_null_model(null_file):
-    """Load null model interactions"""
-    print(f"Loading null model from {null_file}")
-    
-    # The null model file doesn't have chromosome info, just statistical measures
-    null_data = pd.read_csv(null_file)
-    
-    print(f"Loaded {len(null_data)} null model interactions")
-    
-    return null_data
-
 def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000):
     """
     Calculate overlap between interaction anchors and H3K36me3 peaks.
     Returns both anchor-level and interaction-level statistics.
     """
-    print(f"\nAnalyzing H3K36me3 overlap (window size: {window_size}bp)")
-    
     if h3k36me3_peaks is None or len(h3k36me3_peaks) == 0:
-        print("No H3K36me3 peaks available")
         return None
     
     # Create BedTool for H3K36me3 peaks
@@ -200,7 +186,6 @@ def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000
                 'total_peaks': n_peaks_anchor1 + n_peaks_anchor2
             })
         except Exception as e:
-            print(f"Error processing interaction {idx}: {e}")
             results.append({
                 'interaction_idx': idx,
                 'anchor1_overlap': False,
@@ -214,16 +199,11 @@ def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000
     
     results_df = pd.DataFrame(results)
     
-    print(f"\nOverall H3K36me3 overlap statistics:")
-    print(f"  Interactions with at least one anchor overlapping: {results_df['any_anchor_overlap'].sum()} ({results_df['any_anchor_overlap'].mean()*100:.1f}%)")
-    print(f"  Interactions with both anchors overlapping: {results_df['both_anchors_overlap'].sum()} ({results_df['both_anchors_overlap'].mean()*100:.1f}%)")
-    print(f"  Mean H3K36me3 peaks per interaction: {results_df['total_peaks'].mean():.2f}")
-    
     return results_df
 
 def ensure_boolean_columns(df, columns):
     """
-    FIX: Ensure specified columns are boolean type and handle NaN values.
+    Ensure specified columns are boolean type and handle NaN values.
     This prevents TypeError when using the ~ operator.
     """
     df = df.copy()
@@ -241,7 +221,7 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     merged['overlap_idx'] = range(len(merged))
     merged = merged.merge(overlap_results, left_on='overlap_idx', right_on='interaction_idx', how='left')
     
-    # FIX: Ensure boolean columns are properly typed
+    # Ensure boolean columns are properly typed
     bool_cols = ['anchor1_overlap', 'anchor2_overlap', 'both_anchors_overlap', 'any_anchor_overlap']
     merged = ensure_boolean_columns(merged, bool_cols)
     
@@ -269,7 +249,6 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     }
     
     # Statistical comparison using Fisher's exact test
-    # FIX: Ensure boolean before using ~ operator
     contingency = [
         [jw18_uninf['any_anchor_overlap'].sum(), 
          (~jw18_uninf['any_anchor_overlap']).sum()],
@@ -295,38 +274,138 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     
     return results, merged
 
-def compare_to_null_model(real_overlap_rate, null_model):
-    """Compare real H3K36me3 enrichment to null model"""
-    print("\nComparing to null model...")
+def permutation_test_h3k36me3_enrichment(interactions_df, h3k36me3_peaks, 
+                                          overlap_results, window_size=5000, 
+                                          n_permutations=1000):
+    """
+    Perform permutation test by shuffling interaction anchor positions
+    on the X chromosome and recalculating H3K36me3 overlap.
     
-    # The null model doesn't have specific overlap rates, 
-    # so we'll use a baseline expectation
-    # For now, we'll assume 50% as a null expectation (random chance)
-    null_expectation = 0.5
+    Returns:
+        dict with observed overlap rate, null distribution, p-value, and z-score
+    """
+    print(f"\nPerforming permutation test ({n_permutations} permutations)...")
     
-    # Calculate enrichment
-    enrichment = real_overlap_rate / null_expectation
+    # Get observed overlap rate
+    observed_rate = overlap_results['any_anchor_overlap'].mean()
     
-    # Calculate p-value using binomial test
-    # H0: overlap rate = null_expectation
-    n_interactions = len(null_model)
-    n_overlaps = int(real_overlap_rate * n_interactions)
+    # Get X chromosome size from interactions
+    x_chrom_end = max(
+        interactions_df['end1'].max(),
+        interactions_df['end2'].max()
+    )
     
-    # Two-tailed binomial test
-    p_value = stats.binom_test(n_overlaps, n_interactions, null_expectation, alternative='two-sided')
+    print(f"X chromosome size for permutations: {x_chrom_end:,} bp")
+    print(f"Observed overlap rate: {observed_rate*100:.1f}%")
+    
+    # Store null distribution
+    null_overlap_rates = []
+    
+    for perm_idx in range(n_permutations):
+        if (perm_idx + 1) % 100 == 0:
+            print(f"  Permutation {perm_idx + 1}/{n_permutations}...")
+        
+        # Shuffle anchor positions - maintain anchor sizes
+        permuted_interactions = interactions_df.copy()
+        
+        for idx in permuted_interactions.index:
+            # Anchor 1
+            anchor1_size = permuted_interactions.loc[idx, 'end1'] - permuted_interactions.loc[idx, 'start1']
+            new_start1 = np.random.randint(0, max(1, x_chrom_end - anchor1_size))
+            permuted_interactions.loc[idx, 'start1'] = new_start1
+            permuted_interactions.loc[idx, 'end1'] = new_start1 + anchor1_size
+            
+            # Anchor 2
+            anchor2_size = permuted_interactions.loc[idx, 'end2'] - permuted_interactions.loc[idx, 'start2']
+            new_start2 = np.random.randint(0, max(1, x_chrom_end - anchor2_size))
+            permuted_interactions.loc[idx, 'start2'] = new_start2
+            permuted_interactions.loc[idx, 'end2'] = new_start2 + anchor2_size
+        
+        # Calculate overlap for permuted data
+        perm_overlap = calculate_h3k36me3_overlap(
+            permuted_interactions, h3k36me3_peaks, window_size
+        )
+        
+        if perm_overlap is not None:
+            null_overlap_rates.append(perm_overlap['any_anchor_overlap'].mean())
+    
+    null_overlap_rates = np.array(null_overlap_rates)
+    
+    # Calculate empirical p-value (two-tailed)
+    p_value_right = np.mean(null_overlap_rates >= observed_rate)
+    p_value_left = np.mean(null_overlap_rates <= observed_rate)
+    p_value = 2 * min(p_value_right, p_value_left)
+    
+    # Calculate z-score
+    null_mean = null_overlap_rates.mean()
+    null_std = null_overlap_rates.std()
+    z_score = (observed_rate - null_mean) / null_std if null_std > 0 else 0
+    
+    print(f"\nPermutation Test Results:")
+    print(f"  Observed overlap rate: {observed_rate*100:.1f}%")
+    print(f"  Null mean: {null_mean*100:.1f}%")
+    print(f"  Null std: {null_std*100:.2f}%")
+    print(f"  Z-score: {z_score:.2f}")
+    print(f"  Empirical p-value: {p_value:.4f}")
+    print(f"  Significant: {'YES' if p_value < 0.05 else 'NO'}")
     
     return {
-        'real_overlap_rate': real_overlap_rate,
-        'null_expectation': null_expectation,
-        'enrichment': enrichment,
+        'observed_rate': observed_rate,
+        'null_distribution': null_overlap_rates,
+        'null_mean': null_mean,
+        'null_std': null_std,
+        'z_score': z_score,
         'p_value': p_value
     }
+
+def create_permutation_visualization(perm_results, output_prefix):
+    """Create visualization of permutation test results"""
+    print("\nCreating permutation test visualization...")
+    
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+    fig.patch.set_alpha(0)
+    ax.patch.set_alpha(0)
+    
+    # Plot null distribution
+    ax.hist(perm_results['null_distribution'] * 100, bins=30, 
+            color='gray', alpha=0.7, edgecolor='black', linewidth=0.5,
+            label='Permuted null')
+    
+    # Add observed value
+    ax.axvline(perm_results['observed_rate'] * 100, 
+               color='red', linestyle='--', linewidth=2,
+               label=f"Observed ({perm_results['observed_rate']*100:.1f}%)")
+    
+    # Add null mean
+    ax.axvline(perm_results['null_mean'] * 100,
+               color='blue', linestyle=':', linewidth=2,
+               label=f"Null mean ({perm_results['null_mean']*100:.1f}%)")
+    
+    ax.set_xlabel('H3K36me3 Overlap Rate (%)', fontsize=8)
+    ax.set_ylabel('Frequency', fontsize=8)
+    ax.set_title('Permutation Test: H3K36me3 Enrichment', fontsize=10, fontweight='bold')
+    ax.legend(fontsize=7)
+    ax.tick_params(labelsize=7)
+    
+    # Add statistics text box
+    stats_text = (f"Z-score: {perm_results['z_score']:.2f}\n"
+                  f"P-value: {perm_results['p_value']:.4f}")
+    ax.text(0.05, 0.95, stats_text,
+            transform=ax.transAxes, ha='left', va='top', fontsize=7,
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='black'))
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}/h3k36me3_permutation_test.pdf",
+                dpi=300, bbox_inches='tight', transparent=True)
+    plt.close()
+    
+    print(f"Permutation plot saved to {output_prefix}/h3k36me3_permutation_test.pdf")
 
 def create_visualization(merged_df, direction_results, output_prefix):
     """Create separate 2x2 visualizations with updated labels and colors"""
     print("\nCreating visualizations...")
     
-    # FIX: Ensure all boolean columns are properly typed before visualization
+    # Ensure all boolean columns are properly typed before visualization
     bool_cols = ['anchor1_overlap', 'anchor2_overlap', 'both_anchors_overlap', 'any_anchor_overlap']
     merged_df = ensure_boolean_columns(merged_df, bool_cols)
     
@@ -355,8 +434,6 @@ def create_visualization(merged_df, direction_results, output_prefix):
     bars = ax.bar(labels, overlap_rates, color=colors, alpha=0.8)
     ax.set_ylabel('H3K36me3 Overlap Rate (%)', fontsize=6)
     ax.set_title('H3K36me3 Enrichment by Genotype', fontsize=7, fontweight='bold')
-    ax.axhline(y=50, color='gray', linestyle='--', linewidth=0.8, label='Expected (50%)')
-    ax.legend(fontsize=5)
     ax.tick_params(labelsize=6)
     
     # Add p-value if available
@@ -484,8 +561,6 @@ def create_visualization(merged_df, direction_results, output_prefix):
                color=['#3366cc', '#33cc66'], alpha=0.8)
         ax.set_ylabel('H3K36me3 Overlap Rate (%)', fontsize=6)
         ax.set_title('H3K36me3 Enrichment by Interaction Type', fontsize=7, fontweight='bold')
-        ax.axhline(y=50, color='gray', linestyle='--', linewidth=0.8, label='Expected (50%)')
-        ax.legend(fontsize=5)
         ax.tick_params(labelsize=6)
         
         # Add value labels on bars
@@ -496,7 +571,6 @@ def create_visualization(merged_df, direction_results, output_prefix):
                     ha='center', va='bottom', fontsize=5)
         
         # Add Fisher's exact test
-        # FIX: Ensure boolean columns before using ~
         cis_data = merged_df[merged_df['interaction_type'] == 'cis'].copy()
         trans_data = merged_df[merged_df['interaction_type'] == 'trans'].copy()
         cis_data = ensure_boolean_columns(cis_data, ['any_anchor_overlap'])
@@ -565,14 +639,14 @@ def main():
     )
     parser.add_argument('--interactions', required=True,
                        help='Significant differential interactions CSV file')
-    parser.add_argument('--null_model', required=True,
-                       help='Null model interactions CSV file')
     parser.add_argument('--h3k36me3_peaks', required=True,
                        help='H3K36me3 ChIP-seq peaks BED file')
     parser.add_argument('--window_size', type=int, default=5000,
                        help='Window size around interaction anchors (bp)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05,
                        help='FDR threshold for significant interactions')
+    parser.add_argument('--n_permutations', type=int, default=1000,
+                       help='Number of permutations for null model')
     parser.add_argument('--output_prefix', required=True,
                        help='Output file prefix')
     
@@ -591,13 +665,13 @@ def main():
     sig_interactions, all_x_interactions = load_differential_interactions(
         args.interactions, args.fdr_threshold
     )
-    null_model = load_null_model(args.null_model)
     
     if h3k36me3_peaks is None or len(sig_interactions) == 0:
         print("Error: No data to analyze")
         return 1
     
     # Calculate H3K36me3 overlap for significant interactions
+    print(f"\nAnalyzing H3K36me3 overlap (window size: {args.window_size}bp)")
     overlap_results = calculate_h3k36me3_overlap(
         sig_interactions, h3k36me3_peaks, args.window_size
     )
@@ -606,23 +680,26 @@ def main():
         print("Error: Could not calculate overlap")
         return 1
     
+    print(f"\nOverall H3K36me3 overlap statistics:")
+    print(f"  Interactions with at least one anchor overlapping: {overlap_results['any_anchor_overlap'].sum()} ({overlap_results['any_anchor_overlap'].mean()*100:.1f}%)")
+    print(f"  Interactions with both anchors overlapping: {overlap_results['both_anchors_overlap'].sum()} ({overlap_results['both_anchors_overlap'].mean()*100:.1f}%)")
+    print(f"  Mean H3K36me3 peaks per interaction: {overlap_results['total_peaks'].mean():.2f}")
+    
     # Analyze by logFC direction
     direction_results, merged_df = analyze_by_logfc_direction(
         sig_interactions, overlap_results
     )
     
-    # Compare to null model
-    overall_overlap_rate = overlap_results['any_anchor_overlap'].mean()
-    null_comparison = compare_to_null_model(overall_overlap_rate, null_model)
-    
-    print(f"\nNull Model Comparison:")
-    print(f"  Real overlap rate: {null_comparison['real_overlap_rate']*100:.1f}%")
-    print(f"  Expected (baseline): {null_comparison['null_expectation']*100:.1f}%")
-    print(f"  Enrichment: {null_comparison['enrichment']:.2f}x")
-    print(f"  P-value: {null_comparison['p_value']:.2e}")
+    # Perform permutation test
+    perm_results = permutation_test_h3k36me3_enrichment(
+        sig_interactions, h3k36me3_peaks, overlap_results,
+        window_size=args.window_size,
+        n_permutations=args.n_permutations
+    )
     
     # Create visualizations
     create_visualization(merged_df, direction_results, args.output_prefix)
+    create_permutation_visualization(perm_results, args.output_prefix)
     
     # Save detailed results
     merged_df.to_csv(f"{args.output_prefix}/h3k36me3_interactions.csv", index=False)
@@ -632,9 +709,11 @@ def main():
         'total_x_interactions': len(all_x_interactions),
         'significant_x_interactions': len(sig_interactions),
         'h3k36me3_peaks_on_x': len(h3k36me3_peaks),
-        'overall_overlap_rate': overall_overlap_rate,
-        'enrichment_vs_null': null_comparison['enrichment'],
-        'p_value': null_comparison['p_value'],
+        'observed_overlap_rate': perm_results['observed_rate'],
+        'null_mean_overlap_rate': perm_results['null_mean'],
+        'null_std_overlap_rate': perm_results['null_std'],
+        'z_score': perm_results['z_score'],
+        'permutation_pvalue': perm_results['p_value'],
         'jw18_uninf_n': direction_results['jw18_uninf']['n_interactions'],
         'jw18_uninf_overlap_rate': direction_results['jw18_uninf']['overlap_rate'],
         'jw18_wmel_n': direction_results['jw18_wmel']['n_interactions'],
@@ -651,18 +730,21 @@ def main():
         f.write("="*60 + "\n\n")
         f.write(f"Analysis Parameters:\n")
         f.write(f"  Window size: {args.window_size} bp\n")
-        f.write(f"  FDR threshold: {args.fdr_threshold}\n\n")
+        f.write(f"  FDR threshold: {args.fdr_threshold}\n")
+        f.write(f"  Number of permutations: {args.n_permutations}\n\n")
         
         f.write(f"Data Summary:\n")
         f.write(f"  Total X chromosome interactions: {summary['total_x_interactions']}\n")
         f.write(f"  Significant interactions: {summary['significant_x_interactions']}\n")
         f.write(f"  H3K36me3 peaks on X: {summary['h3k36me3_peaks_on_x']}\n\n")
         
-        f.write(f"H3K36me3 Enrichment:\n")
-        f.write(f"  Overall overlap rate: {summary['overall_overlap_rate']*100:.1f}%\n")
-        f.write(f"  Enrichment vs null: {summary['enrichment_vs_null']:.2f}x\n")
-        f.write(f"  P-value: {summary['p_value']:.2e}\n")
-        f.write(f"  Significant: {'YES' if summary['p_value'] < 0.05 else 'NO'}\n\n")
+        f.write(f"Permutation Test Results:\n")
+        f.write(f"  Observed overlap rate: {summary['observed_overlap_rate']*100:.1f}%\n")
+        f.write(f"  Null mean overlap rate: {summary['null_mean_overlap_rate']*100:.1f}%\n")
+        f.write(f"  Null std: {summary['null_std_overlap_rate']*100:.2f}%\n")
+        f.write(f"  Z-score: {summary['z_score']:.2f}\n")
+        f.write(f"  P-value: {summary['permutation_pvalue']:.4f}\n")
+        f.write(f"  Significant: {'YES' if summary['permutation_pvalue'] < 0.05 else 'NO'}\n\n")
         
         f.write(f"Genotype-specific Analysis:\n")
         f.write(f"  JW18 uninf. (up-regulated) interactions:\n")
