@@ -385,7 +385,6 @@ rule h3k36me3_contact_analysis:
         
         python scripts/h3k36me3_contact_analysis.py \
             --interactions {input.interactions} \
-            --null_model {input.null_model} \
             --h3k36me3_peaks {input.h3k36me3_peaks} \
             --window_size {params.window_size} \
             --fdr_threshold {params.fdr_threshold} \
@@ -418,7 +417,6 @@ rule h4k16ac_contact_analysis:
         
         python scripts/h3k36me3_contact_analysis.py \
             --interactions {input.interactions} \
-            --null_model {input.null_model} \
             --h3k36me3_peaks {input.h4k16ac_peaks} \
             --window_size {params.window_size} \
             --fdr_threshold {params.fdr_threshold} \
