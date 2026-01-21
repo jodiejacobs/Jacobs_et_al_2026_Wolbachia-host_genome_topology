@@ -33,10 +33,10 @@ h4k16ac_peaks = f"resources/H4K16ac/GSE130334_H4K16ac.bed"
 
 
 # Conda environments
-COOLER_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
-R_DIFFHIC_ENV = "/private/home/jomojaco/miniforge3/envs/diffhic"
-PYTHON_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
-COOLTOOLS_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
+COOLER_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/micro-c"
+R_DIFFHIC_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/diffhic"
+PYTHON_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/micro-c"
+COOLTOOLS_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/micro-c"
 
 # Define the complete workflow
 rule all:
