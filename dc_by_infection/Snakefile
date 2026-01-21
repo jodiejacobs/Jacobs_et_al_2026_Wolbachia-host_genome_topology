@@ -512,7 +512,7 @@ rule x_chromosome_analysis:
         conditions = conditions,  # Pass as list, not string
         resolution = 8000,
         output_prefix = f"{output_dir}/x_analysis/x_chromosome"
-    mamba:
+    conda:
         COOLTOOLS_ENV  # Use mamba: directive instead of shell activation
     resources:
         mem_mb = 200000,
