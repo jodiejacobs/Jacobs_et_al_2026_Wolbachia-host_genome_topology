@@ -76,8 +76,8 @@ rule identify_contacts:
     threads: 16  
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {COOLER_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {COOLER_ENV}
         
         mkdir -p {output_dir}/contacts/
         bash scripts/extract_multi_resolution.sh \
@@ -100,8 +100,8 @@ rule filter_sv_interactions:
     threads: 4
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/filter_sv_interactions.py \
             --interactions {input.interactions} \
@@ -141,8 +141,8 @@ rule diffhic_analysis:
     threads: 125 
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {R_DIFFHIC_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {R_DIFFHIC_ENV}
         
         Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution.R \
         --data_dir={params.contacts_dir} \
@@ -165,8 +165,8 @@ rule filter_contacts_X:
     threads: 4 
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV} 
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV} 
 
         awk -F, 'NR==1 || $1=="X" || $4=="X"' {input.contacts} > {output.filtered}
         '''
@@ -198,8 +198,8 @@ rule X_chrom_diffhic_analysis:
     threads: 125 
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {R_DIFFHIC_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {R_DIFFHIC_ENV}
         
         Rscript /private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/scripts/analyze_multi_resolution.R \
         --data_dir={params.contacts_dir} \
@@ -233,8 +233,8 @@ rule insulator_contact_analysis:
     threads: 64
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/insulator_contact_analysis.py \
             --interactions {input.interactions} \
@@ -272,8 +272,8 @@ rule X_insulator_contact_analysis:
     threads: 64
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/insulator_contact_analysis.py \
             --interactions {input.interactions} \
@@ -308,8 +308,8 @@ rule check_ndf_interaction:
         output_prefix = f"{output_dir}/insulator_analysis/ndf_interaction"
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/insulator_contact_analysis.py \
             --interactions {input.interactions} \
@@ -347,8 +347,8 @@ rule has_ces_contact_analysis:
     threads: 4
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/has_ces_contact_analysis.py \
             --interactions {input.interactions} \
@@ -380,8 +380,8 @@ rule h3k36me3_contact_analysis:
     threads: 4
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/h3k36me3_contact_analysis.py \
             --interactions {input.interactions} \
@@ -413,8 +413,8 @@ rule h4k16ac_contact_analysis:
     threads: 4
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/h3k36me3_contact_analysis.py \
             --interactions {input.interactions} \
@@ -444,8 +444,8 @@ rule chromatin_structure_analysis:
     threads: 16
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {COOLTOOLS_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {COOLTOOLS_ENV}
         
         mcool_files=({input.mcool_files})
         
@@ -482,8 +482,8 @@ rule enhancer_class_analysis:
     threads: 64
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/enhancer_class_analysis.py \
             --enhancers {input.enhancers} \
@@ -512,16 +512,16 @@ rule x_chromosome_analysis:
         conditions = conditions,  # Pass as list, not string
         resolution = 8000,
         output_prefix = f"{output_dir}/x_analysis/x_chromosome"
-    conda:
-        COOLTOOLS_ENV  # Use conda: directive instead of shell activation
+    mamba:
+        COOLTOOLS_ENV  # Use mamba: directive instead of shell activation
     resources:
         mem_mb = 200000,
         runtime = 480
     threads: 16
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         python scripts/x_chromosome_analysis.py \
             --has_sites {input.has_sites} \
@@ -541,8 +541,8 @@ rule index_vcf:
         index = sv_vcf + ".tbi"
     shell:
         '''
-        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
-        conda activate {PYTHON_ENV}
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {PYTHON_ENV}
         
         if [ ! -f {input.vcf}.gz ]; then
             bgzip -c {input.vcf} > {input.vcf}.gz
