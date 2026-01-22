@@ -28,8 +28,8 @@ tss_file = f"{ref_dir}/dm6_tss.bed"
 insulator_class_i = f"resources/Insulators/Insulator_Class_I_dm6.bed"
 insulator_class_ii = f"resources/Insulators/Insulator_Class_II_dm6.bed"
 has_ces_sites = f"resources/HAS_CES/HAS_sites_dm6.journal.pgen.1000302.bed"
-h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6.bed"
-h4k16ac_peaks = f"resources/H4K16ac/GSE130334_H4K16ac.bed"
+h3k36me3_peaks = f"resources/H3K36me3/GSE20784_H3K36me3_dm6_chrX.bed"
+h4k16ac_peaks = f"resources/H4K16ac/GSE130334_H4K16ac_chrX.bed"
 
 
 # Conda environments
@@ -375,9 +375,9 @@ rule h3k36me3_contact_analysis:
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/h3k36me3_analysis/"
     resources:
-        mem_mb = 64000,
-        runtime = 120
-    threads: 4
+        mem_mb = 1000000,
+        runtime = 720
+    threads: 32
     shell:
         '''
         source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
@@ -407,9 +407,9 @@ rule h4k16ac_contact_analysis:
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/h4k16ac_analysis/"
     resources:
-        mem_mb = 64000,
-        runtime = 120
-    threads: 4
+        mem_mb = 1000000,
+        runtime = 720
+    threads: 32
     shell:
         '''
         source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
