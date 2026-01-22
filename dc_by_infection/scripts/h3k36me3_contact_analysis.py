@@ -727,7 +727,7 @@ def main():
                        help='Window size around interaction anchors (bp)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05,
                        help='FDR threshold for significant interactions')
-    parser.add_argument('--n_permutations', type=int, default=1000,
+    parser.add_argument('--n_permutations', type=int, default=100,
                        help='Number of permutations for null model')
     parser.add_argument('--output_prefix', required=True,
                        help='Output file prefix')

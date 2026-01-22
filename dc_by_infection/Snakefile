@@ -376,7 +376,7 @@ rule h3k36me3_contact_analysis:
         output_prefix = f"{output_dir}/h3k36me3_analysis/"
     resources:
         mem_mb = 1000000,
-        runtime = 720
+        runtime = 1440
     threads: 32
     shell:
         '''
@@ -388,7 +388,7 @@ rule h3k36me3_contact_analysis:
             --h3k36me3_peaks {input.h3k36me3_peaks} \
             --window_size {params.window_size} \
             --fdr_threshold {params.fdr_threshold} \
-            --output_prefix {params.output_prefix}
+            --output_prefix {params.output_prefix} 
         '''
 
 # H4K16ac enrichment analysis at X chromosome contacts
@@ -408,7 +408,7 @@ rule h4k16ac_contact_analysis:
         output_prefix = f"{output_dir}/h4k16ac_analysis/"
     resources:
         mem_mb = 1000000,
-        runtime = 720
+        runtime = 1440
     threads: 32
     shell:
         '''
