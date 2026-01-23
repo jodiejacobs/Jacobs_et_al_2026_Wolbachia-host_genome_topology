@@ -408,7 +408,7 @@ rule h4k16ac_contact_analysis:
         output_prefix = f"{output_dir}/h4k16ac_analysis/"
     resources:
         mem_mb = 1000000,
-        runtime = 1440
+        runtime = 2880
     threads: 32
     shell:
         '''

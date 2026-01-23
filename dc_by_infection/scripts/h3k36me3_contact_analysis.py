@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import gzip
+import sys
 
 def load_h3k36me3_peaks(chip_file):
     """
@@ -79,6 +80,7 @@ def load_h3k36me3_peaks(chip_file):
         
         print(f"Loaded {len(x_peaks)} H3K36me3 peaks on X chromosome")
         print(f"Score range: {x_peaks['score'].min():.2f} - {x_peaks['score'].max():.2f}")
+        print(f"Position range: {x_peaks['start'].min():,} - {x_peaks['end'].max():,}")
         
         return x_peaks
         
@@ -122,6 +124,8 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
         print(f"  Trans interactions: {sum(sig_x['chr1'] != sig_x['chr2'])}")
         print(f"  JW18 uninf. (up-regulated): {sum(sig_x['logFC'] > 0)}")
         print(f"  JW18 wMel (down-regulated): {sum(sig_x['logFC'] < 0)}")
+        print(f"  Position range anchor1: {sig_x['start1'].min():,} - {sig_x['end1'].max():,}")
+        print(f"  Position range anchor2: {sig_x['start2'].min():,} - {sig_x['end2'].max():,}")
     
     return sig_x, x_interactions
 
@@ -186,6 +190,7 @@ def calculate_h3k36me3_overlap(interactions_df, h3k36me3_peaks, window_size=5000
                 'total_peaks': n_peaks_anchor1 + n_peaks_anchor2
             })
         except Exception as e:
+            print(f"Warning: Error processing interaction {idx}: {e}")
             results.append({
                 'interaction_idx': idx,
                 'anchor1_overlap': False,
@@ -301,6 +306,8 @@ def permutation_test_h3k36me3_enrichment(interactions_df, h3k36me3_peaks,
     # Store null distribution
     null_overlap_rates = []
     
+    np.random.seed(42)  # For reproducibility
+    
     for perm_idx in range(n_permutations):
         if (perm_idx + 1) % 100 == 0:
             print(f"  Permutation {perm_idx + 1}/{n_permutations}...")
@@ -395,13 +402,13 @@ def create_permutation_visualization(perm_results, output_prefix):
             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='black'))
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}/h3k36me3_permutation_test.pdf",
+    plt.savefig(f"{output_prefix}_permutation_test.pdf",
                 dpi=300, bbox_inches='tight', transparent=True)
     plt.close()
     
-    print(f"Permutation plot saved to {output_prefix}/h3k36me3_permutation_test.pdf")
+    print(f"Permutation plot saved to {output_prefix}_permutation_test.pdf")
 
-def add_strip_to_boxplot(ax, data, positions, colors, jitter=0.08, alpha=0.4, size=3):
+def add_strip_to_boxplot(ax, data, positions, colors, jitter=0.08, alpha=0.5, size=8):
     """
     Add individual data points to a boxplot with jitter.
     
@@ -422,9 +429,11 @@ def add_strip_to_boxplot(ax, data, positions, colors, jitter=0.08, alpha=0.4, si
         Point size
     """
     for i, (d, pos, color) in enumerate(zip(data, positions, colors)):
-        # Add jitter to x positions
-        x = np.random.normal(pos, jitter, size=len(d))
-        ax.scatter(x, d, alpha=alpha, s=size, color=color, edgecolors='none', zorder=3)
+        if len(d) > 0:  # Only plot if data exists
+            # Add jitter to x positions
+            x = np.random.normal(pos, jitter, size=len(d))
+            ax.scatter(x, d, alpha=alpha, s=size, color=color, edgecolors='black', 
+                      linewidths=0.3, zorder=3)
 
 def create_visualization(merged_df, direction_results, output_prefix):
     """Create separate 2x2 visualizations with boxplots and individual points"""
@@ -448,6 +457,9 @@ def create_visualization(merged_df, direction_results, output_prefix):
     # Prepare data for boxplots
     uninf_peaks = merged_df[merged_df['logFC'] > 0]['total_peaks'].values
     wmel_peaks = merged_df[merged_df['logFC'] < 0]['total_peaks'].values
+    
+    print(f"  JW18 uninf peaks: n={len(uninf_peaks)}, range={uninf_peaks.min()}-{uninf_peaks.max()}")
+    print(f"  JW18 wMel peaks: n={len(wmel_peaks)}, range={wmel_peaks.min()}-{wmel_peaks.max()}")
     
     # --- Plot Set 1: Overlap rates and peak counts (2x2) ---
     fig, axes = plt.subplots(2, 2, figsize=(8, 8))
@@ -474,7 +486,7 @@ def create_visualization(merged_df, direction_results, output_prefix):
     
     # Add individual points with jitter
     add_strip_to_boxplot(ax, [uninf_peaks, wmel_peaks], [0, 1], colors, 
-                         jitter=0.08, alpha=0.4, size=5)
+                         jitter=0.08, alpha=0.5, size=8)
     
     ax.set_xticks([0, 1])
     ax.set_xticklabels(labels)
@@ -484,10 +496,13 @@ def create_visualization(merged_df, direction_results, output_prefix):
     
     # Add Mann-Whitney U test
     if len(uninf_peaks) > 0 and len(wmel_peaks) > 0:
-        u_stat, p_val = stats.mannwhitneyu(uninf_peaks, wmel_peaks, alternative='two-sided')
-        ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
-                transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+        try:
+            u_stat, p_val = stats.mannwhitneyu(uninf_peaks, wmel_peaks, alternative='two-sided')
+            ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
+                    transform=ax.transAxes, ha='right', va='top', fontsize=5,
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+        except Exception as e:
+            print(f"Warning: Could not compute Mann-Whitney U test: {e}")
     
     # Plot 2: H3K36me3 Overlap Rate (Binary - Bar plot makes more sense)
     ax = axes[0, 1]
@@ -517,7 +532,7 @@ def create_visualization(merged_df, direction_results, output_prefix):
                 f'{rate:.1f}%',
                 ha='center', va='bottom', fontsize=5)
     
-    # Plot 3: LogFC vs H3K36me3 peaks (Scatter with boxplots on margins)
+    # Plot 3: LogFC vs H3K36me3 peaks (Scatter)
     ax = axes[1, 0]
     ax.patch.set_alpha(0)
     
@@ -538,10 +553,13 @@ def create_visualization(merged_df, direction_results, output_prefix):
     ax.tick_params(labelsize=6)
     
     # Add correlation statistics
-    corr, p_val = stats.spearmanr(merged_df['logFC'], merged_df['total_peaks'])
-    ax.text(0.05, 0.95, f'ρ = {corr:.3f}\np = {p_val:.2e}', 
-            transform=ax.transAxes, ha='left', va='top', fontsize=5,
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    try:
+        corr, p_val = stats.spearmanr(merged_df['logFC'], merged_df['total_peaks'])
+        ax.text(0.05, 0.95, f'ρ = {corr:.3f}\np = {p_val:.2e}', 
+                transform=ax.transAxes, ha='left', va='top', fontsize=5,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    except Exception as e:
+        print(f"Warning: Could not compute Spearman correlation: {e}")
     
     # Plot 4: Cis vs Trans interactions (BOXPLOT)
     ax = axes[1, 1]
@@ -551,58 +569,57 @@ def create_visualization(merged_df, direction_results, output_prefix):
         cis_peaks = merged_df[merged_df['interaction_type'] == 'cis']['total_peaks'].values
         trans_peaks = merged_df[merged_df['interaction_type'] == 'trans']['total_peaks'].values
         
-        bp = ax.boxplot([cis_peaks, trans_peaks], 
-                         positions=[0, 1],
-                         widths=0.6,
-                         patch_artist=True,
-                         showfliers=False,
-                         boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
-                         medianprops=dict(color='black', linewidth=1.5),
-                         whiskerprops=dict(color='black', linewidth=1),
-                         capprops=dict(color='black', linewidth=1))
-        
-        # Color the boxes
-        box_colors = ['#3366cc', '#33cc66']
-        for patch, color in zip(bp['boxes'], box_colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.6)
-        
-        # Add individual points
-        add_strip_to_boxplot(ax, [cis_peaks, trans_peaks], [0, 1], box_colors,
-                             jitter=0.08, alpha=0.4, size=5)
-        
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(['Cis', 'Trans'])
-        ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
-        ax.set_title('H3K36me3 by Interaction Type', fontsize=7, fontweight='bold')
-        ax.tick_params(labelsize=6)
-        
-        # Add Mann-Whitney U test
         if len(cis_peaks) > 0 and len(trans_peaks) > 0:
-            u_stat, p_val = stats.mannwhitneyu(cis_peaks, trans_peaks, alternative='two-sided')
-            ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
-                    transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+            bp = ax.boxplot([cis_peaks, trans_peaks], 
+                             positions=[0, 1],
+                             widths=0.6,
+                             patch_artist=True,
+                             showfliers=False,
+                             boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
+                             medianprops=dict(color='black', linewidth=1.5),
+                             whiskerprops=dict(color='black', linewidth=1),
+                             capprops=dict(color='black', linewidth=1))
+            
+            # Color the boxes
+            box_colors = ['#3366cc', '#33cc66']
+            for patch, color in zip(bp['boxes'], box_colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.6)
+            
+            # Add individual points
+            add_strip_to_boxplot(ax, [cis_peaks, trans_peaks], [0, 1], box_colors,
+                                 jitter=0.08, alpha=0.5, size=8)
+            
+            ax.set_xticks([0, 1])
+            ax.set_xticklabels(['Cis', 'Trans'])
+            ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
+            ax.set_title('H3K36me3 by Interaction Type', fontsize=7, fontweight='bold')
+            ax.tick_params(labelsize=6)
+            
+            # Add Mann-Whitney U test
+            try:
+                u_stat, p_val = stats.mannwhitneyu(cis_peaks, trans_peaks, alternative='two-sided')
+                ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
+                        transform=ax.transAxes, ha='right', va='top', fontsize=5,
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+            except Exception as e:
+                print(f"Warning: Could not compute Mann-Whitney U test for cis/trans: {e}")
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}/h3k36me3_analysis_set1.pdf", 
+    plt.savefig(f"{output_prefix}_analysis_set1.pdf", 
                 dpi=300, bbox_inches='tight', transparent=True)
     plt.close()
     
-    print(f"Plot set 1 saved to {output_prefix}/h3k36me3_analysis_set1.pdf")
+    print(f"Plot set 1 saved to {output_prefix}_analysis_set1.pdf")
     
     # --- Plot Set 2: Additional analyses (2x2) ---
     fig, axes = plt.subplots(2, 2, figsize=(8, 8))
     fig.patch.set_alpha(0)
     
-    # Plot 1: Both anchors overlap comparison (BOXPLOT)
+    # Plot 1: Both anchors overlap comparison (Bar plot)
     ax = axes[0, 0]
     ax.patch.set_alpha(0)
     
-    uninf_both = merged_df[merged_df['logFC'] > 0]['both_anchors_overlap'].astype(int).values
-    wmel_both = merged_df[merged_df['logFC'] < 0]['both_anchors_overlap'].astype(int).values
-    
-    # For binary data, show as bar plot with individual points
     both_anchors_rates = [
         direction_results['jw18_uninf']['both_anchors_rate'] * 100,
         direction_results['jw18_wmel']['both_anchors_rate'] * 100
@@ -630,37 +647,33 @@ def create_visualization(merged_df, direction_results, output_prefix):
     wmel_a1 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor1'].values
     wmel_a2 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor2'].values
     
-    bp = ax.boxplot([uninf_a1, uninf_a2, wmel_a1, wmel_a2],
-                     positions=[0, 1, 2.5, 3.5],
-                     widths=0.6,
-                     patch_artist=True,
-                     showfliers=False,
-                     boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
-                     medianprops=dict(color='black', linewidth=1.5),
-                     whiskerprops=dict(color='black', linewidth=1),
-                     capprops=dict(color='black', linewidth=1))
-    
-    # Color the boxes
-    anchor_colors = [color_jw18_uninf, color_jw18_uninf, color_jw18_wmel, color_jw18_wmel]
-    for patch, color in zip(bp['boxes'], anchor_colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.6)
-    
-    # Add individual points
-    add_strip_to_boxplot(ax, [uninf_a1, uninf_a2, wmel_a1, wmel_a2], 
-                         [0, 1, 2.5, 3.5], anchor_colors,
-                         jitter=0.08, alpha=0.4, size=5)
-    
-    ax.set_xticks([0.5, 3])
-    ax.set_xticklabels(['JW18 uninf.', 'JW18 wMel'])
-    ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
-    ax.set_title('H3K36me3 Peaks per Anchor', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
-    
-    # Add legend for anchors
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor='lightgray', edgecolor='black', label='Anchor 1'),
-                      Patch(facecolor='darkgray', edgecolor='black', label='Anchor 2')]
+    if all(len(arr) > 0 for arr in [uninf_a1, uninf_a2, wmel_a1, wmel_a2]):
+        bp = ax.boxplot([uninf_a1, uninf_a2, wmel_a1, wmel_a2],
+                         positions=[0, 1, 2.5, 3.5],
+                         widths=0.6,
+                         patch_artist=True,
+                         showfliers=False,
+                         boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
+                         medianprops=dict(color='black', linewidth=1.5),
+                         whiskerprops=dict(color='black', linewidth=1),
+                         capprops=dict(color='black', linewidth=1))
+        
+        # Color the boxes
+        anchor_colors = [color_jw18_uninf, color_jw18_uninf, color_jw18_wmel, color_jw18_wmel]
+        for patch, color in zip(bp['boxes'], anchor_colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.6)
+        
+        # Add individual points
+        add_strip_to_boxplot(ax, [uninf_a1, uninf_a2, wmel_a1, wmel_a2], 
+                             [0, 1, 2.5, 3.5], anchor_colors,
+                             jitter=0.08, alpha=0.5, size=8)
+        
+        ax.set_xticks([0.5, 3])
+        ax.set_xticklabels(['JW18 uninf.', 'JW18 wMel'])
+        ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
+        ax.set_title('H3K36me3 Peaks per Anchor', fontsize=7, fontweight='bold')
+        ax.tick_params(labelsize=6)
     
     # Plot 3: Sample size information
     ax = axes[1, 0]
@@ -709,11 +722,11 @@ def create_visualization(merged_df, direction_results, output_prefix):
                 ha='center', va='bottom', fontsize=5)
     
     plt.tight_layout()
-    plt.savefig(f"{output_prefix}/h3k36me3_analysis_set2.pdf", 
+    plt.savefig(f"{output_prefix}_analysis_set2.pdf", 
                 dpi=300, bbox_inches='tight', transparent=True)
     plt.close()
     
-    print(f"Plot set 2 saved to {output_prefix}/h3k36me3_analysis_set2.pdf")
+    print(f"Plot set 2 saved to {output_prefix}_analysis_set2.pdf")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -727,10 +740,10 @@ def main():
                        help='Window size around interaction anchors (bp)')
     parser.add_argument('--fdr_threshold', type=float, default=0.05,
                        help='FDR threshold for significant interactions')
-    parser.add_argument('--n_permutations', type=int, default=100,
+    parser.add_argument('--n_permutations', type=int, default=1000,
                        help='Number of permutations for null model')
     parser.add_argument('--output_prefix', required=True,
-                       help='Output file prefix')
+                       help='Output file prefix (including directory path)')
     
     args = parser.parse_args()
     
@@ -783,8 +796,10 @@ def main():
     create_visualization(merged_df, direction_results, args.output_prefix)
     create_permutation_visualization(perm_results, args.output_prefix)
     
-    # Save detailed results
-    merged_df.to_csv(f"{args.output_prefix}/h3k36me3_interactions.csv", index=False)
+    # Save detailed results - THIS IS CRITICAL
+    output_csv = f"{args.output_prefix}_interactions.csv"
+    merged_df.to_csv(output_csv, index=False)
+    print(f"\nDetailed results saved to {output_csv}")
     
     # Save summary statistics
     summary = {
@@ -804,10 +819,13 @@ def main():
     }
     
     summary_df = pd.DataFrame([summary])
-    summary_df.to_csv(f"{args.output_prefix}/h3k36me3_summary.csv", index=False)
+    summary_csv = f"{args.output_prefix}_summary.csv"
+    summary_df.to_csv(summary_csv, index=False)
+    print(f"Summary statistics saved to {summary_csv}")
     
     # Create text summary
-    with open(f"{args.output_prefix}/h3k36me3_summary.txt", 'w') as f:
+    summary_txt = f"{args.output_prefix}_summary.txt"
+    with open(summary_txt, 'w') as f:
         f.write("H3K36me3 ENRICHMENT ANALYSIS SUMMARY\n")
         f.write("="*60 + "\n\n")
         f.write(f"Analysis Parameters:\n")
@@ -839,7 +857,8 @@ def main():
         if summary['direction_comparison_pvalue'] is not None:
             f.write(f"  Genotype comparison p-value: {summary['direction_comparison_pvalue']:.2e}\n")
     
-    print(f"\nAnalysis complete! Results saved to {args.output_prefix}/*")
+    print(f"Text summary saved to {summary_txt}")
+    print(f"\nAnalysis complete! All results saved with prefix: {args.output_prefix}")
     
     return 0
 
