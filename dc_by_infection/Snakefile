@@ -402,7 +402,7 @@ rule h4k16ac_contact_analysis:
         interactions = f"{output_dir}/h4k16ac_analysis/h4k16ac_interactions.csv",
     #     plot = f"{output_dir}/h4k16ac_analysis/h4k16ac_analysis.pdf",
     #     summary_csv = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.csv"
-    # params:
+    params:
         window_size = 1000,  # Match your HAS analysis window
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/h4k16ac_analysis/h4k16ac"
