@@ -368,12 +368,12 @@ rule h3k36me3_contact_analysis:
     output:
         summary = f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.txt",
         interactions = f"{output_dir}/h3k36me3_analysis/h3k36me3_interactions.csv",
-        plot = f"{output_dir}/h3k36me3_analysis/h3k36me3_analysis.pdf",
-        summary_csv = f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.csv"
+        # plot = f"{output_dir}/h3k36me3_analysis/h3k36me3_analysis.pdf",
+        # summary_csv = f"{output_dir}/h3k36me3_analysis/h3k36me3_summary.csv"
     params:
         window_size = 5000,  # Match your HAS analysis window
         fdr_threshold = 0.05,
-        output_prefix = f"{output_dir}/h3k36me3_analysis/"
+        output_prefix = f"{output_dir}/h3k36me3_analysis/h3k36me3"
     resources:
         mem_mb = 1000000,
         runtime = 1440
@@ -400,12 +400,12 @@ rule h4k16ac_contact_analysis:
     output:
         summary = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.txt",
         interactions = f"{output_dir}/h4k16ac_analysis/h4k16ac_interactions.csv",
-        plot = f"{output_dir}/h4k16ac_analysis/h4k16ac_analysis.pdf",
-        summary_csv = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.csv"
-    params:
-        window_size = 5000,  # Match your HAS analysis window
+    #     plot = f"{output_dir}/h4k16ac_analysis/h4k16ac_analysis.pdf",
+    #     summary_csv = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.csv"
+    # params:
+        window_size = 1000,  # Match your HAS analysis window
         fdr_threshold = 0.05,
-        output_prefix = f"{output_dir}/h4k16ac_analysis/"
+        output_prefix = f"{output_dir}/h4k16ac_analysis/h4k16ac"
     resources:
         mem_mb = 1000000,
         runtime = 2880
@@ -415,9 +415,9 @@ rule h4k16ac_contact_analysis:
         source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
         mamba activate {PYTHON_ENV}
         
-        python scripts/h3k36me3_contact_analysis.py \
+        python scripts/h4k16ac_contact_analysis.py \
             --interactions {input.interactions} \
-            --h3k36me3_peaks {input.h4k16ac_peaks} \
+            --h4k16ac_peaks {input.h4k16ac_peaks} \
             --window_size {params.window_size} \
             --fdr_threshold {params.fdr_threshold} \
             --output_prefix {params.output_prefix}
