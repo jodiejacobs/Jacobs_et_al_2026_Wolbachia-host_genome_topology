@@ -376,14 +376,14 @@ rule h3k36me3_contact_analysis:
         output_prefix = f"{output_dir}/h3k36me3_analysis/h3k36me3"
     resources:
         mem_mb = 1000000,
-        runtime = 1440
+        runtime = 720
     threads: 32
     shell:
         '''
         source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
         mamba activate {PYTHON_ENV}
         
-        python scripts/h4k26ac_contact_analysis.py \
+        python scripts/h3k36me3_contact_analysis.py \
             --interactions {input.interactions} \
             --h3k36me3_peaks {input.h3k36me3_peaks} \
             --window_size {params.window_size} \
@@ -403,7 +403,7 @@ rule h4k16ac_contact_analysis:
     #     plot = f"{output_dir}/h4k16ac_analysis/h4k16ac_analysis.pdf",
     #     summary_csv = f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.csv"
     params:
-        window_size = 50,  # Match your HAS analysis window
+        window_size = 50, # Smaller window for H4K16ac peaks
         fdr_threshold = 0.05,
         output_prefix = f"{output_dir}/h4k16ac_analysis/h4k16ac"
     resources:

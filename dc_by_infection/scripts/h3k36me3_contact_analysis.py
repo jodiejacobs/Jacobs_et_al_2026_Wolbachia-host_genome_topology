@@ -167,11 +167,11 @@ def calculate_h3k36me3_overlap_vectorized(interactions_df, h3k36me3_peaks, windo
     # Create BedTools objects
     anchor1_bt = pybedtools.BedTool.from_dataframe(anchor1_df[['chrom', 'start', 'end', 'idx']])
     anchor2_bt = pybedtools.BedTool.from_dataframe(anchor2_df[['chrom', 'start', 'end', 'idx']])
-    h3k36me3_bt = pybedtools.BedTool.from_dataframe(h3k36me3_peaks[['chrom', 'start', 'end']])
+    h4k16_bt = pybedtools.BedTool.from_dataframe(h3k36me3_peaks[['chrom', 'start', 'end']])
     
     # Intersect all at once
-    anchor1_overlaps = anchor1_bt.intersect(h3k36me3_bt, wa=True, c=True)
-    anchor2_overlaps = anchor2_bt.intersect(h3k36me3_bt, wa=True, c=True)
+    anchor1_overlaps = anchor1_bt.intersect(h4k16_bt, wa=True, c=True)
+    anchor2_overlaps = anchor2_bt.intersect(h4k16_bt, wa=True, c=True)
     
     # Parse results
     anchor1_counts = {}
@@ -647,56 +647,50 @@ def create_visualization(merged_df, direction_results, peaks_per_int_results, ou
     except Exception as e:
         print(f"Warning: Could not compute Spearman correlation: {e}")
     
-    # Plot 4: NEW - Peaks per Interaction (BOXPLOT with individual points)
-    ax = axes[0, 1]
+    # Plot 4: Cis vs Trans interactions (BOXPLOT)
+    ax = axes[1, 1]
     ax.patch.set_alpha(0)
-
-    # Prepare data
-    uninf_peaks_for_box = merged_df[merged_df['logFC'] > 0]['total_peaks'].values
-    wmel_peaks_for_box = merged_df[merged_df['logFC'] < 0]['total_peaks'].values
-
-    # Create boxplot
-    bp = ax.boxplot([uninf_peaks_for_box, wmel_peaks_for_box], 
-                    positions=[0, 1],
-                    widths=0.6,
-                    patch_artist=True,
-                    showfliers=False,  # We'll add points manually
-                    boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
-                    medianprops=dict(color='black', linewidth=1.5),
-                    whiskerprops=dict(color='black', linewidth=1),
-                    capprops=dict(color='black', linewidth=1))
-
-    # Color the boxes
-    for patch, color in zip(bp['boxes'], colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.6)
-
-    # Add individual points with jitter
-    add_strip_to_boxplot(ax, [uninf_peaks_for_box, wmel_peaks_for_box], [0, 1], colors, 
-                        jitter=0.08, alpha=0.5, size=8)
-
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(labels)
-    ax.set_ylabel('H3K36me3 Peaks per Interaction', fontsize=6)
-    ax.set_title('H3K36me3 Peaks per Interaction', fontsize=7, fontweight='bold')
-    ax.tick_params(labelsize=6)
-
-    # Add Mann-Whitney U test (same as the one used for peaks_per_int_results)
-    if 'comparison' in peaks_per_int_results and 'mannwhitneyu_p_value' in peaks_per_int_results['comparison']:
-        p_val = peaks_per_int_results['comparison']['mannwhitneyu_p_value']
-        if not np.isnan(p_val):
-            ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
-                    transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-
-    # Add summary statistics as text
-    mean_uninf = peaks_per_int_results['jw18_uninf']['mean_peaks']
-    mean_wmel = peaks_per_int_results['jw18_wmel']['mean_peaks']
-    stats_text = f"Mean:\n  uninf: {mean_uninf:.2f}\n  wMel: {mean_wmel:.2f}"
-    ax.text(0.05, 0.95, stats_text,
-            transform=ax.transAxes, ha='left', va='top', fontsize=5,
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-
+    
+    if 'interaction_type' in merged_df.columns:
+        cis_peaks = merged_df[merged_df['interaction_type'] == 'cis']['total_peaks'].values
+        trans_peaks = merged_df[merged_df['interaction_type'] == 'trans']['total_peaks'].values
+        
+        if len(cis_peaks) > 0 and len(trans_peaks) > 0:
+            bp = ax.boxplot([cis_peaks, trans_peaks], 
+                             positions=[0, 1],
+                             widths=0.6,
+                             patch_artist=True,
+                             showfliers=False,
+                             boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
+                             medianprops=dict(color='black', linewidth=1.5),
+                             whiskerprops=dict(color='black', linewidth=1),
+                             capprops=dict(color='black', linewidth=1))
+            
+            # Color the boxes
+            box_colors = ['#3366cc', '#33cc66']
+            for patch, color in zip(bp['boxes'], box_colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.6)
+            
+            # Add individual points
+            add_strip_to_boxplot(ax, [cis_peaks, trans_peaks], [0, 1], box_colors,
+                                 jitter=0.08, alpha=0.5, size=8)
+            
+            ax.set_xticks([0, 1])
+            ax.set_xticklabels(['Cis', 'Trans'])
+            ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
+            ax.set_title('H3K36me3 by Interaction Type', fontsize=7, fontweight='bold')
+            ax.tick_params(labelsize=6)
+            
+            # Add Mann-Whitney U test
+            try:
+                u_stat, p_val = stats.mannwhitneyu(cis_peaks, trans_peaks, alternative='two-sided')
+                ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
+                        transform=ax.transAxes, ha='right', va='top', fontsize=5,
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+            except Exception as e:
+                print(f"Warning: Could not compute Mann-Whitney U test for cis/trans: {e}")
+    
     plt.tight_layout()
     plt.savefig(f"{output_prefix}_analysis_set1.pdf", 
                 dpi=300, bbox_inches='tight', transparent=True)
