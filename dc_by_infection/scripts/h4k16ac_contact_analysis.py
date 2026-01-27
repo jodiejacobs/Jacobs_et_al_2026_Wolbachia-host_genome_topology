@@ -510,7 +510,7 @@ def add_strip_to_boxplot(ax, data, positions, colors, jitter=0.08, alpha=0.5, si
             ax.scatter(x, d, alpha=alpha, s=size, color=color, edgecolors='black', 
                       linewidths=0.3, zorder=3)
 
-def create_visualization(merged_df, direction_results, output_prefix):
+def create_visualization(merged_df, direction_results, peaks_per_int_results, output_prefix):
     """Create separate 2x2 visualizations with boxplots and individual points"""
     print("\nCreating visualizations...")
     
@@ -579,32 +579,43 @@ def create_visualization(merged_df, direction_results, output_prefix):
         except Exception as e:
             print(f"Warning: Could not compute Mann-Whitney U test: {e}")
     
-    # Plot 2: H4K16ac Overlap Rate (Binary - Bar plot makes more sense)
+    # Plot 2: NEW - Peaks per Interaction (Bar plot with error bars)
     ax = axes[0, 1]
     ax.patch.set_alpha(0)
-    overlap_rates = [
-        direction_results['jw18_uninf']['overlap_rate'] * 100,
-        direction_results['jw18_wmel']['overlap_rate'] * 100
+    
+    peaks_per_int = [
+        peaks_per_int_results['jw18_uninf']['peaks_per_interaction'],
+        peaks_per_int_results['jw18_wmel']['peaks_per_interaction']
     ]
-    bars = ax.bar([0, 1], overlap_rates, color=colors, alpha=0.8, width=0.6)
+    
+    # Calculate standard errors for error bars
+    se_uninf = peaks_per_int_results['jw18_uninf']['std_peaks'] / np.sqrt(peaks_per_int_results['jw18_uninf']['n_interactions'])
+    se_wmel = peaks_per_int_results['jw18_wmel']['std_peaks'] / np.sqrt(peaks_per_int_results['jw18_wmel']['n_interactions'])
+    errors = [se_uninf, se_wmel]
+    
+    bars = ax.bar([0, 1], peaks_per_int, yerr=errors, capsize=5,
+                   color=colors, alpha=0.8, width=0.6, 
+                   error_kw={'linewidth': 1, 'ecolor': 'black'})
     ax.set_xticks([0, 1])
     ax.set_xticklabels(labels)
-    ax.set_ylabel('H4K16ac Overlap Rate (%)', fontsize=6)
-    ax.set_title('H4K16ac Enrichment by Genotype', fontsize=7, fontweight='bold')
+    ax.set_ylabel('H4K16ac Peaks per Interaction', fontsize=6)
+    ax.set_title('Normalized H4K16ac Enrichment', fontsize=7, fontweight='bold')
     ax.tick_params(labelsize=6)
     
-    # Add p-value if available
-    if 'comparison' in direction_results and 'fisher_p_value' in direction_results['comparison']:
-        p_val = direction_results['comparison']['fisher_p_value']
-        ax.text(0.5, max(overlap_rates) * 0.95, f'p = {p_val:.2e}', 
-                ha='center', va='top', fontsize=5, 
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    # Add p-value
+    if 'comparison' in peaks_per_int_results and 'mannwhitneyu_p_value' in peaks_per_int_results['comparison']:
+        p_val = peaks_per_int_results['comparison']['mannwhitneyu_p_value']
+        if not np.isnan(p_val):
+            y_pos = max(peaks_per_int[0] + errors[0], peaks_per_int[1] + errors[1]) * 1.15
+            ax.text(0.5, y_pos, f'p = {p_val:.2e}', 
+                    ha='center', va='bottom', fontsize=5, 
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
     
     # Add value labels on bars
-    for i, (bar, rate) in enumerate(zip(bars, overlap_rates)):
+    for i, (bar, rate) in enumerate(zip(bars, peaks_per_int)):
         height = bar.get_height()
-        ax.text(i, height,
-                f'{rate:.1f}%',
+        ax.text(i, height + errors[i],
+                f'{rate:.2f}',
                 ha='center', va='bottom', fontsize=5)
     
     # Plot 3: LogFC vs H4K16ac peaks (Scatter)
@@ -691,23 +702,29 @@ def create_visualization(merged_df, direction_results, output_prefix):
     fig, axes = plt.subplots(2, 2, figsize=(8, 8))
     fig.patch.set_alpha(0)
     
-    # Plot 1: Both anchors overlap comparison (Bar plot)
+    # Plot 1: H4K16ac Overlap Rate (Bar plot)
     ax = axes[0, 0]
     ax.patch.set_alpha(0)
-    
-    both_anchors_rates = [
-        direction_results['jw18_uninf']['both_anchors_rate'] * 100,
-        direction_results['jw18_wmel']['both_anchors_rate'] * 100
+    overlap_rates = [
+        direction_results['jw18_uninf']['overlap_rate'] * 100,
+        direction_results['jw18_wmel']['overlap_rate'] * 100
     ]
-    bars = ax.bar([0, 1], both_anchors_rates, color=colors, alpha=0.8, width=0.6)
+    bars = ax.bar([0, 1], overlap_rates, color=colors, alpha=0.8, width=0.6)
     ax.set_xticks([0, 1])
     ax.set_xticklabels(labels)
-    ax.set_ylabel('Both Anchors Overlap Rate (%)', fontsize=6)
-    ax.set_title('H4K16ac at Both Interaction Anchors', fontsize=7, fontweight='bold')
+    ax.set_ylabel('H4K16ac Overlap Rate (%)', fontsize=6)
+    ax.set_title('H4K16ac Enrichment by Genotype', fontsize=7, fontweight='bold')
     ax.tick_params(labelsize=6)
     
+    # Add p-value if available
+    if 'comparison' in direction_results and 'fisher_p_value' in direction_results['comparison']:
+        p_val = direction_results['comparison']['fisher_p_value']
+        ax.text(0.5, max(overlap_rates) * 0.95, f'p = {p_val:.2e}', 
+                ha='center', va='top', fontsize=5, 
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
+    
     # Add value labels on bars
-    for i, (bar, rate) in enumerate(zip(bars, both_anchors_rates)):
+    for i, (bar, rate) in enumerate(zip(bars, overlap_rates)):
         height = bar.get_height()
         ax.text(i, height,
                 f'{rate:.1f}%',
@@ -802,6 +819,103 @@ def create_visualization(merged_df, direction_results, output_prefix):
     plt.close()
     
     print(f"Plot set 2 saved to {output_prefix}_analysis_set2.pdf")
+
+def analyze_peaks_per_interaction(interactions_df, overlap_results, h4k16ac_peaks):
+    """
+    NEW: Calculate peaks per interaction for wMel vs uninf comparison.
+    This normalizes by the number of interactions.
+    """
+    print("\nAnalyzing peaks per interaction (wMel vs uninf)...")
+    
+    # Merge interactions with overlap results
+    interactions_clean = interactions_df.reset_index(drop=True)
+    overlap_clean = overlap_results.reset_index(drop=True)
+    
+    merged = interactions_clean.copy()
+    for col in overlap_clean.columns:
+        if col != 'interaction_idx':
+            merged[col] = overlap_clean[col].values
+    
+    # Split by direction
+    jw18_uninf = merged[merged['logFC'] > 0]
+    jw18_wmel = merged[merged['logFC'] < 0]
+    
+    # Calculate peaks per interaction
+    results = {
+        'jw18_uninf': {
+            'n_interactions': len(jw18_uninf),
+            'total_peaks': jw18_uninf['total_peaks'].sum(),
+            'peaks_per_interaction': jw18_uninf['total_peaks'].sum() / len(jw18_uninf) if len(jw18_uninf) > 0 else 0,
+            'mean_peaks': jw18_uninf['total_peaks'].mean(),
+            'median_peaks': jw18_uninf['total_peaks'].median(),
+            'std_peaks': jw18_uninf['total_peaks'].std()
+        },
+        'jw18_wmel': {
+            'n_interactions': len(jw18_wmel),
+            'total_peaks': jw18_wmel['total_peaks'].sum(),
+            'peaks_per_interaction': jw18_wmel['total_peaks'].sum() / len(jw18_wmel) if len(jw18_wmel) > 0 else 0,
+            'mean_peaks': jw18_wmel['total_peaks'].mean(),
+            'median_peaks': jw18_wmel['total_peaks'].median(),
+            'std_peaks': jw18_wmel['total_peaks'].std()
+        }
+    }
+    
+    # Statistical test: Mann-Whitney U for peaks per interaction
+    if len(jw18_uninf) > 0 and len(jw18_wmel) > 0:
+        try:
+            u_stat, mw_p = stats.mannwhitneyu(
+                jw18_uninf['total_peaks'], 
+                jw18_wmel['total_peaks'], 
+                alternative='two-sided'
+            )
+            
+            # Effect size (rank-biserial correlation)
+            n1 = len(jw18_uninf)
+            n2 = len(jw18_wmel)
+            rank_biserial = 1 - (2*u_stat) / (n1 * n2)
+            
+            # Cohen's d (effect size for continuous data)
+            pooled_std = np.sqrt(((n1-1)*results['jw18_uninf']['std_peaks']**2 + 
+                                   (n2-1)*results['jw18_wmel']['std_peaks']**2) / (n1+n2-2))
+            cohens_d = (results['jw18_uninf']['mean_peaks'] - results['jw18_wmel']['mean_peaks']) / pooled_std if pooled_std > 0 else np.nan
+            
+        except Exception as e:
+            print(f"Warning: Could not compute statistics: {e}")
+            mw_p = np.nan
+            rank_biserial = np.nan
+            cohens_d = np.nan
+    else:
+        mw_p = np.nan
+        rank_biserial = np.nan
+        cohens_d = np.nan
+    
+    results['comparison'] = {
+        'mannwhitneyu_p_value': mw_p,
+        'effect_size_rank_biserial': rank_biserial,
+        'cohens_d': cohens_d
+    }
+    
+    print(f"\nPeaks per interaction results:")
+    print(f"JW18 uninf.:")
+    print(f"  N interactions: {results['jw18_uninf']['n_interactions']}")
+    print(f"  Total peaks: {results['jw18_uninf']['total_peaks']}")
+    print(f"  Peaks/interaction: {results['jw18_uninf']['peaks_per_interaction']:.2f}")
+    print(f"  Mean ± SD: {results['jw18_uninf']['mean_peaks']:.2f} ± {results['jw18_uninf']['std_peaks']:.2f}")
+    print(f"  Median: {results['jw18_uninf']['median_peaks']:.1f}")
+    print(f"JW18 wMel:")
+    print(f"  N interactions: {results['jw18_wmel']['n_interactions']}")
+    print(f"  Total peaks: {results['jw18_wmel']['total_peaks']}")
+    print(f"  Peaks/interaction: {results['jw18_wmel']['peaks_per_interaction']:.2f}")
+    print(f"  Mean ± SD: {results['jw18_wmel']['mean_peaks']:.2f} ± {results['jw18_wmel']['std_peaks']:.2f}")
+    print(f"  Median: {results['jw18_wmel']['median_peaks']:.1f}")
+    print(f"\nStatistical comparison:")
+    print(f"  Mann-Whitney U p-value: {mw_p:.2e}")
+    if not np.isnan(rank_biserial):
+        print(f"  Effect size (rank-biserial): {rank_biserial:.3f}")
+    if not np.isnan(cohens_d):
+        print(f"  Effect size (Cohen's d): {cohens_d:.3f}")
+    
+    return results
 
 def main():
     parser = argparse.ArgumentParser(

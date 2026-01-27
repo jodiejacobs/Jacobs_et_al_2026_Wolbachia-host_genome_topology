@@ -3,7 +3,7 @@
 # This script extracts both cis and trans interactions from multiple replicates
 # at different resolutions and creates a consolidated output file
 #
-# Usage: ./extract_multi_resolution_v5.sh <input_mcool_rep1> <input_mcool_rep2> <output_file>
+# Usage: ./extract_multi_resolution.sh <input_mcool_rep1> <input_mcool_rep2> <output_file>
 
 # Handle command line arguments
 if [ "$#" -ne 3 ]; then
