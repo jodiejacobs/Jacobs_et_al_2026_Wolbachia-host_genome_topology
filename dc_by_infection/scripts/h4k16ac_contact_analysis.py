@@ -977,6 +977,11 @@ def main():
         sig_interactions, overlap_results
     )
     
+    # NEW: Analyze peaks per interaction
+    peaks_per_int_results = analyze_peaks_per_interaction(
+        sig_interactions, overlap_results, h4k16ac_peaks
+    )
+    
     # Perform permutation test
     perm_results = permutation_test_h4k16ac_enrichment(
         sig_interactions, h4k16ac_peaks, overlap_results,
@@ -985,8 +990,8 @@ def main():
         n_cores=args.n_cores
     )
     
-    # Create visualizations
-    create_visualization(merged_df, direction_results, args.output_prefix)
+    # Create visualizations - UPDATED THIS LINE
+    create_visualization(merged_df, direction_results, peaks_per_int_results, args.output_prefix)
     create_permutation_visualization(perm_results, args.output_prefix)
     
     # Save results
@@ -1014,7 +1019,12 @@ def main():
         'jw18_wmel_median_peaks': direction_results['jw18_wmel']['median_peaks'],
         'overlap_fisher_pvalue': direction_results.get('comparison', {}).get('fisher_p_value', None),
         'peak_count_mannwhitney_pvalue': direction_results.get('comparison', {}).get('mannwhitneyu_p_value', None),
-        'peak_count_effect_size': direction_results.get('comparison', {}).get('effect_size_rank_biserial', None)
+        'peak_count_effect_size': direction_results.get('comparison', {}).get('effect_size_rank_biserial', None),
+        'jw18_uninf_peaks_per_interaction': peaks_per_int_results['jw18_uninf']['peaks_per_interaction'],
+        'jw18_wmel_peaks_per_interaction': peaks_per_int_results['jw18_wmel']['peaks_per_interaction'],
+        'peaks_per_int_mannwhitneyu_pvalue': peaks_per_int_results.get('comparison', {}).get('mannwhitneyu_p_value', None),
+        'peaks_per_int_effect_size_rb': peaks_per_int_results.get('comparison', {}).get('effect_size_rank_biserial', None),
+        'peaks_per_int_cohens_d': peaks_per_int_results.get('comparison', {}).get('cohens_d', None)
     }
     
     summary_df = pd.DataFrame([summary])
