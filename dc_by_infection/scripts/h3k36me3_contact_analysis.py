@@ -126,8 +126,8 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
     if len(sig_x) > 0:
         print(f"  Cis interactions: {sum(sig_x['chr1'] == sig_x['chr2'])}")
         print(f"  Trans interactions: {sum(sig_x['chr1'] != sig_x['chr2'])}")
-        print(f"  JW18 uninf. (up-regulated): {sum(sig_x['logFC'] > 0)}")
-        print(f"  JW18 wMel (down-regulated): {sum(sig_x['logFC'] < 0)}")
+        print(f"  JW18 uninf. (down-regulated): {sum(sig_x['logFC'] < 0)}")
+        print(f"  JW18 wMel (up-regulated): {sum(sig_x['logFC'] > 0)}")
         print(f"  Position range anchor1: {sig_x['start1'].min():,} - {sig_x['end1'].max():,}")
         print(f"  Position range anchor2: {sig_x['start2'].min():,} - {sig_x['end2'].max():,}")
     

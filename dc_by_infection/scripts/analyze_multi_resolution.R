@@ -35,8 +35,8 @@ option_list <- list(
               help="Minimum read count"),
   make_option(c("--min_samples"), type="integer", default=2,
               help="Minimum samples with min_count"),
-  make_option(c("--fdr"), type="double", default=0.05,
-              help="FDR threshold"),
+  make_option(c("--pval"), type="double", default=0.05,
+              help="P-value threshold"),
   make_option(c("--output_dir"), type="character", default="diffhic_results",
               help="Output directory"),
   make_option(c("--reference"), type="character", default="JW18DOX",
@@ -52,7 +52,7 @@ data_dir <- opt$data_dir
 resolutions <- as.numeric(unlist(strsplit(opt$resolutions, ",")))
 min_count <- opt$min_count
 min_samples <- opt$min_samples
-fdr_threshold <- opt$fdr
+pval_threshold <- opt$pval
 output_dir <- opt$output_dir
 reference_level <- opt$reference
 threads <- opt$threads
@@ -64,7 +64,7 @@ cat("  Data dir:", data_dir, "\n")
 cat("  Resolutions:", paste(resolutions, collapse=", "), "bp\n")
 cat("  Min count:", min_count, "\n")
 cat("  Min samples:", min_samples, "\n")
-cat("  FDR:", fdr_threshold, "\n")
+cat("  P-value:", pval_threshold, "\n")
 cat("  Reference:", reference_level, "\n\n")
 
 # Create output directories
@@ -232,7 +232,7 @@ add_annotations <- function(results_table, iset) {
 }
 
 # Generate comprehensive interaction tables
-generate_interaction_tables <- function(results_list, output_dir, fdr_threshold) {
+generate_interaction_tables <- function(results_list, output_dir, pval_threshold) {
   cat("\nGenerating comprehensive interaction tables...\n")
   
   tables_dir <- file.path(output_dir, "comprehensive_tables")
@@ -290,10 +290,10 @@ generate_interaction_tables <- function(results_list, output_dir, fdr_threshold)
   cat("Tables saved to:", tables_dir, "\n")
 }
 
-# Create custom volcano plot
+# Create custom volcano plot (raw p-value based)
 create_custom_volcano_plot <- function(data, title, output_file, interaction_type = NULL, 
-                                      logFC_col = "logFC", pval_col = "PValue", fdr_col = "FDR", 
-                                      fdr_threshold = 0.05, logFC_threshold = 1) {
+                                      logFC_col = "logFC", pval_col = "PValue", 
+                                      pval_threshold = 0.05, logFC_threshold = 1) {
   
   # Filter by interaction type if specified
   if (!is.null(interaction_type)) {
@@ -324,12 +324,12 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
     # Calculate -log10 p-values
     plot_data$neg_log10_pval <- -log10(plot_data[[pval_col]])
     
-    # Color coding
+    # Color coding (raw p-value based)
     plot_data$color <- "grey80"
     plot_data$color[abs(plot_data[[logFC_col]]) > logFC_threshold] <- "grey60"
-    plot_data$color[plot_data[[fdr_col]] < fdr_threshold] <- "grey40"
+    plot_data$color[plot_data[[pval_col]] < pval_threshold] <- "grey40"
     
-    sig_idx <- plot_data[[fdr_col]] < fdr_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
+    sig_idx <- plot_data[[pval_col]] < pval_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
     plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#1bab4b"
     plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#8ecc85"
     
@@ -338,7 +338,7 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
     sig_points <- plot_data[sig_idx, ]
     
     if (nrow(sig_points) > 0) {
-      sig_points <- sig_points[order(sig_points[[fdr_col]], -abs(sig_points[[logFC_col]])), ]
+      sig_points <- sig_points[order(sig_points[[pval_col]], -abs(sig_points[[logFC_col]])), ]
       top_n <- min(15, nrow(sig_points))
       top_sig_idx <- rownames(sig_points)[1:top_n]
       plot_data$to_label[rownames(plot_data) %in% top_sig_idx] <- TRUE
@@ -362,12 +362,12 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
         max.overlaps = 15,
         min.segment.length = 0
       ) +
-      geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+      geom_hline(yintercept = -log10(pval_threshold), linetype = "dashed", color = "grey") +
       geom_vline(xintercept = c(-logFC_threshold, logFC_threshold), linetype = "dashed", color = "grey") +
       theme_bw(base_size = 12) +
       labs(
         title = paste0(title, subtitle),
-        subtitle = paste0("FDR < ", fdr_threshold, ", |log2FC| > ", logFC_threshold),
+        subtitle = paste0("P < ", pval_threshold, ", |log2FC| > ", logFC_threshold),
         x = "log2 Fold Change",
         y = "-log10(P-value)",
         caption = paste0('Total = ', nrow(plot_data), ' | Labeled top ', sum(plot_data$to_label))
@@ -406,7 +406,7 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
 }
 
 # Create volcano plots for all resolutions
-create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold) {
+create_custom_volcano_plots <- function(results_list, output_dir, pval_threshold) {
   cat("\nCreating custom volcano plots...\n")
   
   # Close any open graphics devices
@@ -432,7 +432,7 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
         data = annotated_results,
         title = paste0("Differential Interactions at ", res, "bp Resolution"),
         output_file = file.path(volcano_dir, paste0("volcano_", res, "bp_all.pdf")),
-        fdr_threshold = fdr_threshold
+        pval_threshold = pval_threshold
       )
       
       create_custom_volcano_plot(
@@ -440,7 +440,7 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
         title = paste0("Differential Interactions at ", res, "bp Resolution"),
         output_file = file.path(volcano_dir, paste0("volcano_", res, "bp_cis.pdf")),
         interaction_type = "cis",
-        fdr_threshold = fdr_threshold
+        pval_threshold = pval_threshold
       )
       
       create_custom_volcano_plot(
@@ -448,7 +448,7 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
         title = paste0("Differential Interactions at ", res, "bp Resolution"),
         output_file = file.path(volcano_dir, paste0("volcano_", res, "bp_trans.pdf")),
         interaction_type = "trans",
-        fdr_threshold = fdr_threshold
+        pval_threshold = pval_threshold
       )
     }
   }
@@ -458,7 +458,7 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
       data = all_annotated_results,
       title = "Combined Differential Interactions Across All Resolutions",
       output_file = file.path(volcano_dir, "volcano_combined_all.pdf"),
-      fdr_threshold = fdr_threshold
+      pval_threshold = pval_threshold
     )
     
     create_custom_volcano_plot(
@@ -466,7 +466,7 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
       title = "Combined Differential Interactions",
       output_file = file.path(volcano_dir, "volcano_combined_cis.pdf"),
       interaction_type = "cis",
-      fdr_threshold = fdr_threshold
+      pval_threshold = pval_threshold
     )
     
     create_custom_volcano_plot(
@@ -474,14 +474,14 @@ create_custom_volcano_plots <- function(results_list, output_dir, fdr_threshold)
       title = "Combined Differential Interactions",
       output_file = file.path(volcano_dir, "volcano_combined_trans.pdf"),
       interaction_type = "trans",
-      fdr_threshold = fdr_threshold
+      pval_threshold = pval_threshold
     )
     
     create_custom_volcano_plot(
       data = all_annotated_results,
       title = "Top Differential Interactions",
       output_file = file.path(volcano_dir, "volcano_combined_top_hits.pdf"),
-      fdr_threshold = fdr_threshold / 10,
+      pval_threshold = pval_threshold / 10,
       logFC_threshold = 1.5
     )
   }
@@ -664,9 +664,9 @@ process_resolution <- function(resolution) {
     cat("  Adding annotations...\n")
     annotated <- add_annotations(top$table, filtered_iset)
     
-    # Count significant
-    sig <- annotated[annotated$FDR < fdr_threshold, ]
-    cat("  Significant:", nrow(sig), "interactions (FDR <", fdr_threshold, ")\n")
+    # Count significant (raw p-value)
+    sig <- annotated[annotated$PValue < pval_threshold, ]
+    cat("  Significant:", nrow(sig), "interactions (P <", pval_threshold, ")\n")
     
     # Save results
     cat("  Saving results...\n")
@@ -692,10 +692,10 @@ process_resolution <- function(resolution) {
     abline(h = c(-1, 0, 1), col = c("blue", "red", "blue"), lty = c(2, 1, 2))
     
     plot(top$table$logFC, -log10(top$table$PValue),
-         pch = 20, col = ifelse(top$table$FDR < fdr_threshold, "red", "black"),
+         pch = 20, col = ifelse(top$table$PValue < pval_threshold, "red", "black"),
          xlab = "log2 FC", ylab = "-log10(P)",
          main = paste0("Volcano: ", coef_name))
-    abline(v = c(-1, 1), h = -log10(0.05), lty = 2, col = "blue")
+    abline(v = c(-1, 1), h = -log10(pval_threshold), lty = 2, col = "blue")
     
     dev.off()
     
@@ -772,10 +772,10 @@ cat("Generating summary and plots\n")
 cat("========================================\n")
 
 # Generate comprehensive tables
-generate_interaction_tables(results_list, output_dir, fdr_threshold)
+generate_interaction_tables(results_list, output_dir, pval_threshold)
 
 # Generate volcano plots
-create_custom_volcano_plots(results_list, output_dir, fdr_threshold)
+create_custom_volcano_plots(results_list, output_dir, pval_threshold)
 
 # Summary table
 summary_table <- data.frame(
@@ -799,7 +799,7 @@ tryCatch({
   cat("Parameters:\n")
   cat("  Min count:", min_count, "\n")
   cat("  Min samples:", min_samples, "\n")
-  cat("  FDR threshold:", fdr_threshold, "\n\n")
+  cat("  P-value threshold:", pval_threshold, "\n\n")
   cat("Results by Resolution:\n")
   print(summary_table)
   cat("\n")

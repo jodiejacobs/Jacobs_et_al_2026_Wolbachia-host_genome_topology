@@ -364,8 +364,8 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     merged['interaction_type'] = np.where(merged['chr1'] == merged['chr2'], 'cis', 'trans')
     
     # Split by direction
-    jw18_uninf = merged[merged['logFC'] > 0]
-    jw18_wmel = merged[merged['logFC'] < 0]
+    jw18_uninf = merged[merged['logFC'] < 0]
+    jw18_wmel = merged[merged['logFC'] > 0]
     
     # Calculate statistics
     results = {

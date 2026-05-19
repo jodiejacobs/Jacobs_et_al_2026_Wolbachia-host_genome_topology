@@ -462,6 +462,7 @@ rule chromatin_structure_analysis:
             --tad_window_size 50000 \
             --output_prefix {params.output_prefix}
         '''
+        
 # Enhancer class analysis
 rule enhancer_class_analysis:
     input:
