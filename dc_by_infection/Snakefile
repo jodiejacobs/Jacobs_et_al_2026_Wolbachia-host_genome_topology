@@ -422,36 +422,39 @@ rule h4k16ac_contact_analysis:
             --fdr_threshold {params.fdr_threshold} \
             --output_prefix {params.output_prefix}
         '''
-
 # Chromatin structure analysis using cooltools
 rule chromatin_structure_analysis:
     input:
         mcool_files = expand(f"{data_dir}/{{sample}}-1.matrix.mcool", sample=samples),
-        diffhic_results = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",  # Changed this line
-        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv"   
+        diffhic_results = f"{output_dir}/diffhic_results/comprehensive_tables/all_sig_interactions_combined.csv",
+        null_model = f"{output_dir}/diffhic_results/res_8000/null_model_results.csv",
+        genome_fasta = '/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/reference/dmelanogaster_genome/dmel-all-chromosome-r6.63.fasta',   # <-- adjust to match your config variable (e.g. config["genome_fasta"])
     output:
         plot = f"{output_dir}/chromatin_structure/chromatin_structure_chromatin_structure_comparison.pdf",
-        analysis_summary = f"{output_dir}/chromatin_structure/chromatin_structure_insulation_comparison.tsv"
+        switches_plot = f"{output_dir}/chromatin_structure/chromatin_structure_compartment_switches.pdf",
+        compartment_tsv = f"{output_dir}/chromatin_structure/chromatin_structure_compartment_comparison.tsv",
+        analysis_summary = f"{output_dir}/chromatin_structure/chromatin_structure_analysis_summary.txt",
     params:
         conditions = " ".join(conditions),
         chromosomes = " ".join(chromosomes),
-        output_prefix = f"{output_dir}/chromatin_structure/chromatin_structure"
+        output_prefix = f"{output_dir}/chromatin_structure/chromatin_structure",
     resources:
         mem_mb = 200000,
-        runtime = 480
+        runtime = 480,
     threads: 16
     shell:
         '''
         source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
         mamba activate {COOLTOOLS_ENV}
-        
+
         mcool_files=({input.mcool_files})
-        
+
         python scripts/call_tads_loops.py \
             --mcool_files ${{mcool_files[@]}} \
             --conditions {params.conditions} \
             --diffhic_results {input.diffhic_results} \
             --null_model {input.null_model} \
+            --genome_fasta {input.genome_fasta} \
             --chromosomes {params.chromosomes} \
             --resolution_compartment 64000 \
             --resolution_loop 4000 \
@@ -459,7 +462,6 @@ rule chromatin_structure_analysis:
             --tad_window_size 50000 \
             --output_prefix {params.output_prefix}
         '''
-
 # Enhancer class analysis
 rule enhancer_class_analysis:
     input:

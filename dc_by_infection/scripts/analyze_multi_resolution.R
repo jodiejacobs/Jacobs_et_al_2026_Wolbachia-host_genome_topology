@@ -330,8 +330,8 @@ create_custom_volcano_plot <- function(data, title, output_file, interaction_typ
     plot_data$color[plot_data[[fdr_col]] < fdr_threshold] <- "grey40"
     
     sig_idx <- plot_data[[fdr_col]] < fdr_threshold & abs(plot_data[[logFC_col]]) > logFC_threshold
-    plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#8ecc85"
-    plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#1bab4b"
+    plot_data$color[sig_idx & plot_data[[logFC_col]] > 0] <- "#1bab4b"
+    plot_data$color[sig_idx & plot_data[[logFC_col]] < 0] <- "#8ecc85"
     
     # Label top 15 points
     plot_data$to_label <- FALSE
