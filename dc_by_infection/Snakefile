@@ -149,7 +149,7 @@ rule diffhic_analysis:
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
         --threads={threads} \
-        --fdr=0.05
+        --pval=0.05
         '''
 
 rule filter_contacts_X:
@@ -206,7 +206,7 @@ rule X_chrom_diffhic_analysis:
         --output_dir={params.output_dir} \
         --resolution={params.resolution} \
         --threads={threads} \
-        --fdr=0.05
+        --pval=0.05
         '''
 
 # Insulator enrichment analysis with permutation testing # This is for the whole genome, not just X chromosome
@@ -458,8 +458,7 @@ rule chromatin_structure_analysis:
             --chromosomes {params.chromosomes} \
             --resolution_compartment 64000 \
             --resolution_loop 4000 \
-            --fdr_threshold 0.1 \
-            --tad_window_size 50000 \
+            --fdr_threshold 0.01 \
             --output_prefix {params.output_prefix}
         '''
         
@@ -476,7 +475,7 @@ rule enhancer_class_analysis:
         classification = enhancer_classification if os.path.exists(enhancer_classification) else "",
         output_prefix = f"{output_dir}/enhancer_analysis/enhancer",
         reference_condition = "DOX",
-        fdr_threshold = 0.1
+        fdr_threshold = 0.01
     resources:
         mem_mb = 100000,
         runtime = 720

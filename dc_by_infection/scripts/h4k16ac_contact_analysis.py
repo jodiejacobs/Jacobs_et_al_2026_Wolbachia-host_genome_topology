@@ -108,30 +108,30 @@ def load_differential_interactions(interactions_file, fdr_threshold=0.05):
     print(f"Loaded {len(interactions)} total interactions")
     print(f"Chromosomes in data: {sorted(interactions['chr1'].unique())}")
     
-    # Filter for X chromosome interactions
-    x_interactions = interactions[
-        ((interactions['chr1'] == 'X') | (interactions['chr2'] == 'X'))
-    ].copy()
+    # # Filter for X chromosome interactions
+    # x_interactions = interactions[
+    #     ((interactions['chr1'] == 'X') | (interactions['chr2'] == 'X'))
+    # ].copy()
     
-    print(f"Found {len(x_interactions)} total X chromosome interactions")
+    # print(f"Found {len(x_interactions)} total X chromosome interactions")
     
     # Filter for significant
-    sig_x = x_interactions[
-        (x_interactions['FDR'] < fdr_threshold) & 
-        (abs(x_interactions['logFC']) > 1)
+    sig = interactions[
+        (interactions['FDR'] < fdr_threshold) & 
+        (abs(interactions['logFC']) > 1)
     ].copy()
     
-    print(f"Found {len(sig_x)} significant X chromosome interactions (FDR < {fdr_threshold}, |logFC| > 1)")
+    print(f"Found {len(sig)} significant interactions (FDR < {fdr_threshold}, |logFC| > 1)")
     
-    if len(sig_x) > 0:
-        print(f"  Cis interactions: {sum(sig_x['chr1'] == sig_x['chr2'])}")
-        print(f"  Trans interactions: {sum(sig_x['chr1'] != sig_x['chr2'])}")
-        print(f"  JW18 uninf. (up-regulated): {sum(sig_x['logFC'] > 0)}")
-        print(f"  JW18 wMel (down-regulated): {sum(sig_x['logFC'] < 0)}")
-        print(f"  Position range anchor1: {sig_x['start1'].min():,} - {sig_x['end1'].max():,}")
-        print(f"  Position range anchor2: {sig_x['start2'].min():,} - {sig_x['end2'].max():,}")
+    if len(sig) > 0:
+        print(f"  Cis interactions: {sum(sig['chr1'] == sig['chr2'])}")
+        print(f"  Trans interactions: {sum(sig['chr1'] != sig['chr2'])}")
+        print(f"  JW18 uninf. (up-regulated): {sum(sig['logFC'] > 0)}")
+        print(f"  JW18 wMel (down-regulated): {sum(sig['logFC'] < 0)}")
+        print(f"  Position range anchor1: {sig['start1'].min():,} - {sig['end1'].max():,}")
+        print(f"  Position range anchor2: {sig['start2'].min():,} - {sig['end2'].max():,}")
     
-    return sig_x, x_interactions
+    return sig, interactions
 
 def calculate_h4k16ac_overlap_vectorized(interactions_df, h4k16ac_peaks, window_size=5000):
     """

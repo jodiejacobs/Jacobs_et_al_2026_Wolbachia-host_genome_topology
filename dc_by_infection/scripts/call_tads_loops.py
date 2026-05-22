@@ -9,6 +9,15 @@ FIXED (2026-05): Eigenvectors are now phased against GC content so E1 > 0 == A
                  (gene-rich/active) consistently across chromosomes and conditions.
                  This makes A->B / B->A switches biologically interpretable rather
                  than dependent on the arbitrary sign of each eigendecomposition.
+UPDATED: Renamed "TAD boundary" differential interaction logic to "hotspots".
+UPDATED: Switched from binomial test to label-permutation null for switch-rate tests.
+ADDED: Implemented direct cooltools.insulation derived TAD analysis with plotting.
+ADDED: Compartment Saddle plots and compartmentalization strength (AA*BB)/(AB*BA).
+       This metric quantifies global compartmentalization strength without per-bin testing.
+       Method popularized for differential work by:
+         - Schwarzer et al. 2017 (Nature 551:51–56)
+         - Nora et al. 2017 (Cell 169(5):930–944)
+         - cooltools (Venev et al.)
 """
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -18,7 +27,6 @@ import cooltools
 from cooltools import expected_cis
 from cooltools import dots
 from cooltools import eigs_cis
-from cooltools import insulation
 
 import numpy as np
 import pandas as pd
@@ -68,14 +76,14 @@ def load_null_model(null_file):
     return null_df
 
 
-def identify_tad_boundaries_from_interactions(significant_interactions, conditions, window_size=50000):
+def identify_hotspots_from_interactions(significant_interactions, conditions, window_size=50000):
     """
-    Identify TAD boundaries based on significant differential interactions.
-    TAD boundaries are regions with enriched differential interactions.
+    Identify differential-interaction hotspots.
+    Hotspots are regions with enriched differential interactions.
     """
-    print("Identifying TAD boundaries from differential interactions...")
+    print("Identifying differential-interaction hotspots from interactions...")
 
-    all_boundaries = {}
+    all_hotspots = {}
 
     condition_col = None
     for possible_col in ['infection', 'condition', 'comparison', 'contrast', 'group']:
@@ -97,20 +105,20 @@ def identify_tad_boundaries_from_interactions(significant_interactions, conditio
                 significant_interactions[condition_col] == group_name
             ].copy()
 
-            boundaries = process_interactions_for_boundaries(group_data, window_size)
+            hotspots = process_interactions_for_hotspots(group_data, window_size)
 
-            if boundaries:
-                boundaries_df = pd.DataFrame(boundaries)
+            if hotspots:
+                hotspots_df = pd.DataFrame(hotspots)
                 clean_name = str(group_name).replace('infectionJW18', '').replace('infection', '')
-                boundaries_df['condition'] = clean_name
-                all_boundaries[clean_name] = boundaries_df
-                print(f"  Found {len(boundaries_df)} boundaries for {clean_name}")
+                hotspots_df['condition'] = clean_name
+                all_hotspots[clean_name] = hotspots_df
+                print(f"  Found {len(hotspots_df)} hotspots for {clean_name}")
     else:
         print(f"  No condition column found. Processing all interactions together.")
-        print(f"  Will assign boundaries to conditions based on logFC direction")
+        print(f"  Will assign hotspots to conditions based on logFC direction")
 
         for condition in conditions:
-            print(f"  Creating boundaries for {condition}...")
+            print(f"  Creating hotspots for {condition}...")
             if condition in ['DOX', 'uninfected']:
                 condition_data = significant_interactions.copy()
             else:
@@ -118,20 +126,20 @@ def identify_tad_boundaries_from_interactions(significant_interactions, conditio
                     significant_interactions['logFC'] > 0
                 ].copy()
 
-            boundaries = process_interactions_for_boundaries(condition_data, window_size)
+            hotspots = process_interactions_for_hotspots(condition_data, window_size)
 
-            if boundaries:
-                boundaries_df = pd.DataFrame(boundaries)
-                boundaries_df['condition'] = condition
-                all_boundaries[condition] = boundaries_df
-                print(f"  Found {len(boundaries_df)} boundaries for {condition}")
+            if hotspots:
+                hotspots_df = pd.DataFrame(hotspots)
+                hotspots_df['condition'] = condition
+                all_hotspots[condition] = hotspots_df
+                print(f"  Found {len(hotspots_df)} hotspots for {condition}")
 
-    return all_boundaries
+    return all_hotspots
 
 
-def process_interactions_for_boundaries(interaction_data, window_size=50000):
-    """Helper function to process interactions and identify boundaries."""
-    boundaries = []
+def process_interactions_for_hotspots(interaction_data, window_size=50000):
+    """Helper function to process interactions and identify hotspots."""
+    hotspots = []
 
     for chrom in interaction_data['chr1'].unique():
         chrom_interactions = interaction_data[
@@ -164,34 +172,34 @@ def process_interactions_for_boundaries(interaction_data, window_size=50000):
 
         for peak in peaks:
             if peak < len(bins) - 1:
-                boundary_start = bins[peak]
-                boundary_end = bins[peak + 1]
+                hotspot_start = bins[peak]
+                hotspot_end = bins[peak + 1]
 
-                boundaries.append({
+                hotspots.append({
                     'chrom': chrom,
-                    'start': boundary_start,
-                    'end': boundary_end,
-                    'boundary_strength': bin_counts[peak],
+                    'start': hotspot_start,
+                    'end': hotspot_end,
+                    'hotspot_strength': bin_counts[peak],
                     'n_interactions': np.sum(
-                        (chrom_interactions['start1'] >= boundary_start) &
-                        (chrom_interactions['end2'] <= boundary_end)
+                        (chrom_interactions['start1'] >= hotspot_start) &
+                        (chrom_interactions['end2'] <= hotspot_end)
                     )
                 })
 
-    return boundaries
+    return hotspots
 
 
-def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
-    """Compare TAD boundaries between conditions using the null model."""
-    print("Comparing TAD boundaries between conditions...")
+def compare_hotspots(hotspots_data, null_model, fdr_threshold=0.05):
+    """Compare hotspots between conditions using the null model."""
+    print("Comparing hotspots between conditions...")
 
-    if not tad_boundaries:
-        print("No TAD boundaries to compare")
+    if not hotspots_data:
+        print("No hotspots to compare")
         return pd.DataFrame()
 
     ref_condition = None
     for condition in ['DOX', 'uninfected']:
-        if condition in tad_boundaries:
+        if condition in hotspots_data:
             ref_condition = condition
             break
 
@@ -199,54 +207,54 @@ def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
         print("Warning: No reference condition found")
         return pd.DataFrame()
 
-    ref_boundaries = tad_boundaries[ref_condition]
+    ref_hotspots = hotspots_data[ref_condition]
     comparison_results = []
 
-    for infected_condition in tad_boundaries.keys():
+    for infected_condition in hotspots_data.keys():
         if infected_condition == ref_condition:
             continue
 
-        infected_boundaries = tad_boundaries[infected_condition]
-        print(f"  Comparing {ref_condition} ({len(ref_boundaries)}) vs {infected_condition} ({len(infected_boundaries)})")
+        infected_hotspots = hotspots_data[infected_condition]
+        print(f"  Comparing {ref_condition} ({len(ref_hotspots)}) vs {infected_condition} ({len(infected_hotspots)})")
 
         overlaps = []
-        for _, ref_boundary in ref_boundaries.iterrows():
-            chrom_boundaries = infected_boundaries[
-                infected_boundaries['chrom'] == ref_boundary['chrom']
+        for _, ref_hotspot in ref_hotspots.iterrows():
+            chrom_hotspots = infected_hotspots[
+                infected_hotspots['chrom'] == ref_hotspot['chrom']
             ]
 
-            for _, inf_boundary in chrom_boundaries.iterrows():
-                overlap_start = max(ref_boundary['start'], inf_boundary['start'])
-                overlap_end = min(ref_boundary['end'], inf_boundary['end'])
+            for _, inf_hotspot in chrom_hotspots.iterrows():
+                overlap_start = max(ref_hotspot['start'], inf_hotspot['start'])
+                overlap_end = min(ref_hotspot['end'], inf_hotspot['end'])
 
                 if overlap_start < overlap_end:
                     overlap_length = overlap_end - overlap_start
-                    ref_length = ref_boundary['end'] - ref_boundary['start']
-                    inf_length = inf_boundary['end'] - inf_boundary['start']
+                    ref_length = ref_hotspot['end'] - ref_hotspot['start']
+                    inf_length = inf_hotspot['end'] - inf_hotspot['start']
 
                     if (overlap_length / ref_length >= 0.5 and
                             overlap_length / inf_length >= 0.5):
 
-                        strength_change = (inf_boundary['boundary_strength'] -
-                                           ref_boundary['boundary_strength'])
+                        strength_change = (inf_hotspot['hotspot_strength'] -
+                                           ref_hotspot['hotspot_strength'])
 
                         overlaps.append({
-                            'chrom': ref_boundary['chrom'],
-                            'ref_start': ref_boundary['start'],
-                            'ref_end': ref_boundary['end'],
-                            'inf_start': inf_boundary['start'],
-                            'inf_end': inf_boundary['end'],
-                            'ref_strength': ref_boundary['boundary_strength'],
-                            'inf_strength': inf_boundary['boundary_strength'],
+                            'chrom': ref_hotspot['chrom'],
+                            'ref_start': ref_hotspot['start'],
+                            'ref_end': ref_hotspot['end'],
+                            'inf_start': inf_hotspot['start'],
+                            'inf_end': inf_hotspot['end'],
+                            'ref_strength': ref_hotspot['hotspot_strength'],
+                            'inf_strength': inf_hotspot['hotspot_strength'],
                             'strength_change': strength_change,
                             'log2_fold_change': np.log2(
-                                (inf_boundary['boundary_strength'] + 1) /
-                                (ref_boundary['boundary_strength'] + 1)
+                                (inf_hotspot['hotspot_strength'] + 1) /
+                                (ref_hotspot['hotspot_strength'] + 1)
                             )
                         })
 
         if not overlaps:
-            print(f"    No overlapping boundaries found")
+            print(f"    No overlapping hotspots found")
             continue
 
         overlaps_df = pd.DataFrame(overlaps)
@@ -262,16 +270,16 @@ def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
         observed_change = overlaps_df['strength_change'].mean()
         p_value = np.sum(np.abs(null_changes) >= np.abs(observed_change)) / n_permutations
 
-        boundary_p_values = []
+        hotspot_p_values = []
         for _, row in overlaps_df.iterrows():
             null_dist = np.random.normal(0, null_changes.std(), 1000)
             p_val = np.sum(np.abs(null_dist) >= np.abs(row['strength_change'])) / 1000
-            boundary_p_values.append(p_val)
+            hotspot_p_values.append(p_val)
 
-        overlaps_df['p_value'] = boundary_p_values
+        overlaps_df['p_value'] = hotspot_p_values
 
-        if len(boundary_p_values) > 0:
-            _, overlaps_df['fdr'], _, _ = multipletests(boundary_p_values, method='fdr_bh')
+        if len(hotspot_p_values) > 0:
+            _, overlaps_df['fdr'], _, _ = multipletests(hotspot_p_values, method='fdr_bh')
             overlaps_df['significant'] = overlaps_df['fdr'] < fdr_threshold
         else:
             overlaps_df['fdr'] = []
@@ -282,7 +290,7 @@ def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
 
         comparison_results.append(overlaps_df)
 
-        print(f"    Found {len(overlaps_df)} overlapping boundaries, "
+        print(f"    Found {len(overlaps_df)} overlapping hotspots, "
               f"{overlaps_df['significant'].sum() if len(overlaps_df) > 0 else 0} significant")
 
     if comparison_results:
@@ -291,16 +299,144 @@ def compare_tad_boundaries(tad_boundaries, null_model, fdr_threshold=0.05):
         return pd.DataFrame()
 
 
+def calculate_cooltools_tads(mcool_files, conditions, resolution=50000, window=150000):
+    """
+    Calculate TADs (insulation scores and boundaries) using cooltools.
+    Auto-corrects window sizes to ensure they are exact multiples of the matrix resolution.
+    """
+    print("\nCalculating cooltools insulation scores and boundaries...")
+    tads_data = {}
+
+    for condition, mcool_file in zip(conditions, mcool_files):
+        print(f"  Processing {condition}...")
+        actual_res = get_closest_resolution(mcool_file, resolution)
+        if actual_res is None:
+            continue
+
+        clr = cooler.Cooler(f"{mcool_file}::resolutions/{actual_res}")
+
+        # CRITICAL FIX: cooltools requires the window to be an EXACT multiple of the bin size.
+        bin_multiplier = max(3, round(window / actual_res)) # Force at least a 3-bin window
+        actual_window = actual_res * bin_multiplier
+
+        try:
+            print(f"    Using resolution: {actual_res} bp, actual window: {actual_window} bp ({bin_multiplier} bins)")
+            ins_df = cooltools.insulation(clr, [actual_window], nproc=4)
+            
+            # Standardize column names back to what the plotting/saving functions expect
+            ins_df = ins_df.rename(columns={
+                f'is_boundary_{actual_window}': f'is_boundary_{window}',
+                f'boundary_strength_{actual_window}': f'boundary_strength_{window}',
+                f'log2_insulation_score_{actual_window}': f'log2_insulation_score_{window}'
+            })
+            
+            tads_data[condition] = ins_df
+            boundary_col = f'is_boundary_{window}'
+            n_boundaries = ins_df[boundary_col].sum() if boundary_col in ins_df.columns else 0
+            print(f"    Found {n_boundaries} TAD boundaries for {condition}")
+            
+        except Exception as e:
+            print(f"    Warning: Failed to calculate insulation for {condition}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    return tads_data
+
+def create_tad_insulation_plots(tads_data, window, output_prefix):
+    """
+    Create summary visualizations for Cooltools TADs/Insulation.
+    Generates three panels:
+    1. Total TAD boundaries.
+    2. KDE of boundary strengths.
+    3. KDE of global insulation scores.
+    """
+    if not tads_data:
+        print("No TAD insulation data to plot")
+        return
+
+    print("\nCreating TAD insulation plots...")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    boundary_col = f'is_boundary_{window}'
+    strength_col = f'boundary_strength_{window}'
+    insulation_col = f'log2_insulation_score_{window}'
+
+    conditions = list(tads_data.keys())
+    boundary_counts = []
+    
+    df_list_str = []
+    df_list_ins = []
+
+    for condition in conditions:
+        df = tads_data[condition]
+
+        # 1. Boundary counts
+        if boundary_col in df.columns:
+            count = df[boundary_col].sum()
+            boundary_counts.append(count)
+        else:
+            boundary_counts.append(0)
+
+        # 2. Boundary strengths setup for KDE
+        if strength_col in df.columns and boundary_col in df.columns:
+            tmp_str = df[df[boundary_col]][[strength_col]].copy()
+            tmp_str.rename(columns={strength_col: 'value'}, inplace=True)
+            tmp_str['condition'] = condition
+            df_list_str.append(tmp_str)
+
+        # 3. Global insulation setup for KDE
+        if insulation_col in df.columns:
+            tmp_ins = df[[insulation_col]].dropna().copy()
+            # Randomly sample if too large to prevent seaborn memory issues
+            if len(tmp_ins) > 50000:
+                tmp_ins = tmp_ins.sample(50000, random_state=42)
+            tmp_ins.rename(columns={insulation_col: 'value'}, inplace=True)
+            tmp_ins['condition'] = condition
+            df_list_ins.append(tmp_ins)
+
+    # Panel 1: Total Boundaries
+    ax = axes[0]
+    ax.bar(conditions, boundary_counts, color='#3498db', edgecolor='black', alpha=0.8)
+    ax.set_title('Total TAD Boundaries')
+    ax.set_ylabel('Count')
+    ax.set_xticks(range(len(conditions)))
+    ax.set_xticklabels(conditions, rotation=45)
+    for i, count in enumerate(boundary_counts):
+        ax.text(i, count, str(count), ha='center', va='bottom', fontweight='bold')
+
+    # Panel 2: Boundary Strengths KDE
+    ax = axes[1]
+    if df_list_str:
+        df_str_all = pd.concat(df_list_str, ignore_index=True)
+        sns.kdeplot(data=df_str_all, x='value', hue='condition', ax=ax, common_norm=False, fill=True, alpha=0.3)
+        ax.set_title('Distribution of Boundary Strengths')
+        ax.set_xlabel('Boundary Strength')
+        ax.set_ylabel('Density')
+    else:
+        ax.text(0.5, 0.5, "No boundary strength data", ha='center', va='center')
+
+    # Panel 3: Global Insulation KDE
+    ax = axes[2]
+    if df_list_ins:
+        df_ins_all = pd.concat(df_list_ins, ignore_index=True)
+        sns.kdeplot(data=df_ins_all, x='value', hue='condition', ax=ax, common_norm=False, fill=True, alpha=0.3)
+        ax.set_title('Global Insulation Scores')
+        ax.set_xlabel('Log2 Insulation Score')
+        ax.set_ylabel('Density')
+    else:
+        ax.text(0.5, 0.5, "No insulation data", ha='center', va='center')
+
+    plt.tight_layout()
+    out_file = f"{output_prefix}_tad_insulation_summary.pdf"
+    plt.savefig(out_file, dpi=300)
+    print(f"  Saved TAD insulation plots to {out_file}")
+    plt.close()
+
+
 def calculate_compartments_all_conditions(mcool_files, conditions, chromosomes,
                                           genome_fasta, resolution=64000, n_eigs=3):
     """
     Calculate A/B compartments for all conditions using cooltools.
-
-    Eigenvectors are phased against GC content so E1 > 0 corresponds to
-    high-GC == A compartment (gene-rich, active) consistently across
-    chromosomes and conditions. Without phasing, the sign of each eigenvector
-    is arbitrary and can flip between chromosomes or between conditions,
-    making A->B / B->A switch counts uninterpretable.
     """
     all_compartments = {}
 
@@ -399,10 +535,6 @@ def calculate_compartments_all_conditions(mcool_files, conditions, chromosomes,
 def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_threshold=0.05):
     """
     Compare compartment changes between conditions.
-
-    Uses a per-bin z-score on absolute E1 change against the genome-wide
-    mean and SD, plus a paired t-test on signed E1 change and a binomial
-    test on compartment-switch rate.
     """
     print("\nComparing compartment changes...")
 
@@ -467,17 +599,23 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         _, merged['fdr'], _, _ = multipletests(merged['p_value'], method='fdr_bh')
         merged['significant'] = merged['fdr'] < fdr_threshold
 
-        # Compartment switch rate test
+        # Label permutation null for compartment switch rate
         observed_switches = merged['switch'].sum()
         total_bins = len(merged)
         switch_rate = observed_switches / total_bins
-        # binom_test was removed in scipy 1.12+; use binomtest where available
-        try:
-            switch_p_value = stats.binomtest(observed_switches, total_bins, 0.5,
-                                             alternative='two-sided').pvalue
-        except AttributeError:
-            switch_p_value = stats.binom_test(observed_switches, total_bins, 0.5,
-                                              alternative='two-sided')
+
+        n_perms = 1000
+        uninf_labels = merged['compartment_uninf'].values
+        inf_labels = merged['compartment_inf'].values
+        null_switches = np.zeros(n_perms)
+
+        for i in range(n_perms):
+            shuffled = np.random.permutation(inf_labels)
+            null_switches[i] = np.sum(uninf_labels != shuffled)
+
+        mean_null = np.mean(null_switches)
+        # two-sided permutation p-value
+        switch_p_value = np.sum(np.abs(null_switches - mean_null) >= np.abs(observed_switches - mean_null)) / n_perms
 
         merged['comparison'] = f"{ref_condition}_vs_{infected_condition}"
         merged['switch_rate'] = switch_rate
@@ -493,11 +631,131 @@ def compare_compartments_to_null(compartment_data, null_model, conditions, fdr_t
         print(f"    Top 5 most significant bins have |E1_diff| >= "
               f"{merged.nsmallest(5, 'p_value')['abs_E1_diff'].min():.3f}")
         print(f"    E1_diff range: [{merged['E1_diff'].min():.3f}, {merged['E1_diff'].max():.3f}]")
-        print(f"    Switch rate: {switch_rate:.2%}, p={switch_p_value:.3e}")
+        print(f"    Switch rate: {switch_rate:.2%}, perm_p={switch_p_value:.3e}")
 
     if comparison_results:
         return pd.concat(comparison_results, ignore_index=True)
     else:
+        return pd.DataFrame()
+
+
+def calculate_saddle_plots(mcool_files, conditions, compartment_data, chromosomes, resolution=64000, n_bins=30, output_prefix="out"):
+    """
+    Calculate and plot compartment saddle plots and compartmentalization strength.
+
+    This method quantifies global compartmentalization strength without per-bin testing.
+    Popularized for differential Hi-C/Micro-C work by:
+      - Schwarzer et al. 2017 (Nature 551:51-56)
+      - Nora et al. 2017 (Cell 169(5):930-944)
+    and implemented here utilizing the cooltools API.
+    """
+    print("\n" + "=" * 60)
+    print("CALCULATING COMPARTMENT SADDLE PLOTS")
+    print("=" * 60)
+
+    saddle_strengths = []
+
+    # Setup plotting grid
+    fig, axes = plt.subplots(1, len(conditions), figsize=(5 * len(conditions), 4))
+    if len(conditions) == 1:
+        axes = [axes]
+
+    for idx, (condition, mcool_file) in enumerate(zip(conditions, mcool_files)):
+        print(f"  Processing saddle for {condition}...")
+        actual_res = get_closest_resolution(mcool_file, resolution)
+        if actual_res is None or condition not in compartment_data:
+            print(f"  Skipping {condition}: missing mcool resolution or E1 tracks")
+            continue
+
+        clr = cooler.Cooler(f"{mcool_file}::resolutions/{actual_res}")
+
+        from cooltools.lib.common import make_cooler_view
+        view_df = make_cooler_view(clr)
+        filtered_chroms = [c for c in chromosomes if c not in ['Y', 'Mt']]
+        view_df = view_df[view_df['chrom'].isin(filtered_chroms)].reset_index(drop=True)
+
+        # Get E1 track and ensure proper format
+        eigvecs = compartment_data[condition]
+        track = eigvecs[['chrom', 'start', 'end', 'E1']].copy()
+        track = track.dropna()
+
+        try:
+            print(f"    Calculating expected cis contacts...")
+            expected = expected_cis(clr, view_df=view_df, nproc=4)
+
+            print(f"    Digitizing E1 track into {n_bins} bins...")
+            q_track, q_hist = cooltools.digitize(
+                track,
+                n_bins,
+                v_name='E1',
+                q_name='state'
+            )
+
+            print(f"    Computing saddle map...")
+            interaction_sum, interaction_count = cooltools.saddle(
+                clr,
+                expected,
+                q_track,
+                'cis',
+                view_df=view_df,
+                q_name='state',
+                nproc=4
+            )
+
+            # Generate observed/expected saddle map
+            saddle_map = interaction_sum / interaction_count
+
+            # Calculate global compartmentalization strength from corners
+            # Utilizing top and bottom 20% bins as the active/inactive corners
+            n_corner = max(1, n_bins // 5)
+            BB = np.nanmean(saddle_map[:n_corner, :n_corner])
+            AA = np.nanmean(saddle_map[-n_corner:, -n_corner:])
+            BA = np.nanmean(saddle_map[:n_corner, -n_corner:])
+            AB = np.nanmean(saddle_map[-n_corner:, :n_corner])
+
+            # Compartmentalization strength: (AA * BB) / (AB * BA)
+            strength = (AA * BB) / (AB * BA)
+
+            saddle_strengths.append({
+                'condition': condition,
+                'strength': strength,
+                'AA_corner': AA,
+                'BB_corner': BB,
+                'AB_corner': AB,
+                'BA_corner': BA
+            })
+
+            # Plot heatmap
+            ax = axes[idx]
+            im = ax.imshow(
+                np.log2(saddle_map),
+                cmap='coolwarm',
+                vmin=-1, vmax=1
+            )
+            ax.set_title(f"{condition}\nStrength: {strength:.2f}")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if idx == 0:
+                ax.set_ylabel("B -> A")
+                ax.set_xlabel("B -> A")
+
+        except Exception as e:
+            print(f"  Warning: Failed to calculate saddle for {condition}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    if saddle_strengths:
+        plt.colorbar(im, ax=axes, label="log2(obs/exp)")
+        plt.savefig(f"{output_prefix}_saddle_plots.pdf", bbox_inches='tight')
+        plt.close()
+
+        df_strength = pd.DataFrame(saddle_strengths)
+        df_strength.to_csv(f"{output_prefix}_saddle_strengths.tsv", sep='\t', index=False)
+        print(f"  Saved saddle plots to {output_prefix}_saddle_plots.pdf")
+        print(f"  Saved saddle strengths to {output_prefix}_saddle_strengths.tsv")
+        return df_strength
+    else:
+        plt.close()
         return pd.DataFrame()
 
 
@@ -603,13 +861,6 @@ def compare_loops_to_null(loop_data, null_model, conditions, fdr_threshold=0.05)
 
         print(f"  Found {len(gained)} gained loops and {len(lost)} lost loops")
 
-        if 'logFC' in null_model.columns:
-            null_mean = null_model['logFC'].mean()
-            null_std = null_model['logFC'].std()
-        else:
-            null_mean = 0
-            null_std = 1
-
         n_permutations = 1000
         null_gained = []
         null_lost = []
@@ -663,13 +914,7 @@ def compare_loops_to_null(loop_data, null_model, conditions, fdr_threshold=0.05)
 
 def create_compartment_switch_plots(compartment_comp, output_prefix):
     """
-    Detailed plots for compartment switches:
-      - Significant A->B vs B->A switches (DOX/uninfected -> infected)
-      - % Changed vs Unchanged (significant only)
-      - Chromosome-level breakdown of switches by direction
-      - E1 difference distributions
-      - Switch rate: significant vs non-significant bins
-      - Statistical summary table
+    Detailed plots for compartment switches.
     """
     if compartment_comp.empty:
         print("No compartment comparison data to plot")
@@ -810,12 +1055,17 @@ def create_compartment_switch_plots(compartment_comp, output_prefix):
                                  [not_sig_switched, not_sig_invariant]]
             odds_ratio, fisher_p = fisher_exact(contingency_table)
 
-            try:
-                binom_p_sig = stats.binomtest(sig_switched, sig_switched + sig_invariant,
-                                              0.5, alternative='two-sided').pvalue
-            except AttributeError:
-                binom_p_sig = stats.binom_test(sig_switched, sig_switched + sig_invariant,
-                                               0.5, alternative='two-sided')
+            # Label permutation for significant bins
+            uninf_labels = sig_data['compartment_uninf'].values
+            inf_labels = sig_data['compartment_inf'].values
+            n_perms = 1000
+            null_switches = np.zeros(n_perms)
+            for i in range(n_perms):
+                shuffled = np.random.permutation(inf_labels)
+                null_switches[i] = np.sum(uninf_labels != shuffled)
+            
+            mean_null = np.mean(null_switches)
+            perm_p_sig = np.sum(np.abs(null_switches - mean_null) >= np.abs(sig_switched - mean_null)) / n_perms
 
             summary_text = [
                 f"Statistical Summary - {comp_name}",
@@ -841,9 +1091,9 @@ def create_compartment_switch_plots(compartment_comp, output_prefix):
                 f"    p-value: {fisher_p:.3e}",
                 f"    → {'NOT significant' if fisher_p > 0.05 else 'SIGNIFICANT'}",
                 "",
-                f"  Sig bins vs 50% null:",
-                f"    p-value: {binom_p_sig:.3e}",
-                f"    → {'NOT significant' if binom_p_sig > 0.05 else 'SIGNIFICANT'}",
+                f"  Sig bins switch vs permutation null:",
+                f"    p-value: {perm_p_sig:.3e}",
+                f"    → {'NOT significant' if perm_p_sig > 0.05 else 'SIGNIFICANT'}",
             ]
 
             ax.text(0.05, 0.95, '\n'.join(summary_text),
@@ -862,31 +1112,31 @@ def create_compartment_switch_plots(compartment_comp, output_prefix):
     plt.close()
 
 
-def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_prefix):
+def create_summary_plots(hotspot_comparison, compartment_comp, loop_comp, output_prefix):
     """Create summary visualizations for all comparisons."""
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-    # Plot 1: TAD boundary changes
+    # Plot 1: Hotspot changes
     ax = axes[0, 0]
-    if not tad_comparison.empty and 'comparison' in tad_comparison.columns:
+    if not hotspot_comparison.empty and 'comparison' in hotspot_comparison.columns:
         try:
-            boundary_stats = tad_comparison.groupby('comparison')['significant'].sum()
+            boundary_stats = hotspot_comparison.groupby('comparison')['significant'].sum()
             if len(boundary_stats) > 0:
                 ax.bar(range(len(boundary_stats)), boundary_stats.values)
                 ax.set_xticks(range(len(boundary_stats)))
                 ax.set_xticklabels([x.replace('_vs_', ' vs ') for x in boundary_stats.index],
                                    rotation=45)
         except Exception as e:
-            print(f"Warning: Could not plot TAD boundary changes: {e}")
+            print(f"Warning: Could not plot Hotspot changes: {e}")
     ax.set_ylabel('Number of Significant Changes')
-    ax.set_title('TAD Boundary Changes')
+    ax.set_title('Hotspot Changes')
 
-    # Plot 2: TAD boundary strength changes
+    # Plot 2: Hotspot strength changes
     ax = axes[0, 1]
-    if not tad_comparison.empty and 'log2_fold_change' in tad_comparison.columns:
+    if not hotspot_comparison.empty and 'log2_fold_change' in hotspot_comparison.columns:
         try:
-            for comparison in tad_comparison['comparison'].unique():
-                data = tad_comparison[tad_comparison['comparison'] == comparison]
+            for comparison in hotspot_comparison['comparison'].unique():
+                data = hotspot_comparison[hotspot_comparison['comparison'] == comparison]
                 sig_data = data[data['significant']]
                 if len(sig_data) > 0:
                     ax.hist(sig_data['log2_fold_change'], alpha=0.5,
@@ -894,10 +1144,10 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
             ax.axvline(x=0, color='black', linestyle='--', alpha=0.5)
             ax.legend()
         except Exception as e:
-            print(f"Warning: Could not plot boundary strength changes: {e}")
-    ax.set_xlabel('Log2 Fold Change in Boundary Strength')
+            print(f"Warning: Could not plot hotspot strength changes: {e}")
+    ax.set_xlabel('Log2 Fold Change in Strength')
     ax.set_ylabel('Count')
-    ax.set_title('TAD Boundary Strength Changes')
+    ax.set_title('Hotspot Strength Changes')
 
     # Plot 3: Compartment switches
     ax = axes[0, 2]
@@ -968,20 +1218,20 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
     summary_data = []
 
     all_comparisons = set()
-    if not tad_comparison.empty and 'comparison' in tad_comparison.columns:
-        all_comparisons.update(tad_comparison['comparison'].unique())
+    if not hotspot_comparison.empty and 'comparison' in hotspot_comparison.columns:
+        all_comparisons.update(hotspot_comparison['comparison'].unique())
     if not compartment_comp.empty and 'comparison' in compartment_comp.columns:
         all_comparisons.update(compartment_comp['comparison'].unique())
     if not loop_comp.empty and 'comparison' in loop_comp.columns:
         all_comparisons.update(loop_comp['comparison'].unique())
 
     for comp in all_comparisons:
-        tad_sig = 0
+        hotspot_sig = 0
         comp_sig = 0
         loop_count = 0
         try:
-            if not tad_comparison.empty and 'comparison' in tad_comparison.columns:
-                tad_sig = tad_comparison[tad_comparison['comparison'] == comp]['significant'].sum()
+            if not hotspot_comparison.empty and 'comparison' in hotspot_comparison.columns:
+                hotspot_sig = hotspot_comparison[hotspot_comparison['comparison'] == comp]['significant'].sum()
             if not compartment_comp.empty and 'comparison' in compartment_comp.columns:
                 comp_sig = compartment_comp[compartment_comp['comparison'] == comp]['significant'].sum()
             if not loop_comp.empty and 'comparison' in loop_comp.columns:
@@ -994,7 +1244,7 @@ def create_summary_plots(tad_comparison, compartment_comp, loop_comp, output_pre
         comp_name = comp.replace('DOX_vs_', '').replace('uninfected_vs_', '')
         summary_data.append({
             'Comparison': comp_name,
-            'TAD boundaries': tad_sig,
+            'Hotspots': hotspot_sig,
             'Compartments': comp_sig,
             'Loops': loop_count
         })
@@ -1035,12 +1285,18 @@ def main():
                         help='Chromosomes to analyze')
     parser.add_argument('--resolution_compartment', type=int, default=50000,
                         help='Resolution for compartment analysis')
+    parser.add_argument('--n_saddle_bins', type=int, default=30,
+                        help='Number of quantiles for saddle plot compartmentalization analysis')
     parser.add_argument('--resolution_loop', type=int, default=5000,
                         help='Resolution for loop calling')
     parser.add_argument('--fdr_threshold', type=float, default=0.1,
                         help='FDR threshold for significance')
-    parser.add_argument('--tad_window_size', type=int, default=50000,
-                        help='Window size for TAD boundary identification')
+    parser.add_argument('--hotspot_window_size', type=int, default=50000,
+                        help='Window size for differential-interaction hotspots identification')
+    parser.add_argument('--resolution_insulation', type=int, default=50000,
+                        help='Resolution for cooltools TAD insulation calculation')
+    parser.add_argument('--window_insulation', type=int, default=150000,
+                        help='Window size for cooltools TAD insulation calculation')
     parser.add_argument('--output_prefix', required=True,
                         help='Output file prefix')
 
@@ -1058,17 +1314,28 @@ def main():
     all_results, significant_results = load_diffhic_results(args.diffhic_results)
     null_model = load_null_model(args.null_model)
 
-    # TAD boundaries from differential interactions
+    # Hotspots from differential interactions
     print("\n" + "=" * 60)
-    print("IDENTIFYING TAD BOUNDARIES FROM DIFFERENTIAL INTERACTIONS")
+    print("IDENTIFYING DIFFERENTIAL-INTERACTION HOTSPOTS")
     print("=" * 60)
 
-    tad_boundaries = identify_tad_boundaries_from_interactions(
-        significant_results, args.conditions, window_size=args.tad_window_size
+    hotspots = identify_hotspots_from_interactions(
+        significant_results, args.conditions, window_size=args.hotspot_window_size
     )
 
-    tad_comparison = compare_tad_boundaries(
-        tad_boundaries, null_model, args.fdr_threshold
+    hotspot_comparison = compare_hotspots(
+        hotspots, null_model, args.fdr_threshold
+    )
+
+    # Cooltools Insulation / TADs
+    print("\n" + "=" * 60)
+    print("CALCULATING COOLTOOLS TADS (INSULATION)")
+    print("=" * 60)
+
+    cooltools_tads = calculate_cooltools_tads(
+        args.mcool_files, args.conditions,
+        resolution=args.resolution_insulation,
+        window=args.window_insulation
     )
 
     # Compartments (GC-phased)
@@ -1084,6 +1351,14 @@ def main():
 
     compartment_comparison = compare_compartments_to_null(
         compartment_data, null_model, args.conditions, args.fdr_threshold
+    )
+
+    # Saddle Plots & Compartmentalization Strength
+    saddle_strengths_df = calculate_saddle_plots(
+        args.mcool_files, args.conditions, compartment_data, args.chromosomes,
+        resolution=args.resolution_compartment,
+        n_bins=args.n_saddle_bins,
+        output_prefix=args.output_prefix
     )
 
     # Loops
@@ -1105,9 +1380,10 @@ def main():
     print("CREATING VISUALIZATIONS")
     print("=" * 60)
 
+    create_tad_insulation_plots(cooltools_tads, args.window_insulation, args.output_prefix)
     create_compartment_switch_plots(compartment_comparison, args.output_prefix)
     create_summary_plots(
-        tad_comparison, compartment_comparison, loop_comparison,
+        hotspot_comparison, compartment_comparison, loop_comparison,
         args.output_prefix
     )
 
@@ -1116,11 +1392,11 @@ def main():
     print("SAVING RESULTS")
     print("=" * 60)
 
-    if not tad_comparison.empty:
-        tad_comparison.to_csv(
-            f"{args.output_prefix}_tad_boundary_comparison.tsv", sep='\t', index=False
+    if not hotspot_comparison.empty:
+        hotspot_comparison.to_csv(
+            f"{args.output_prefix}_hotspot_comparison.tsv", sep='\t', index=False
         )
-        print(f"Saved TAD boundary comparison: {args.output_prefix}_tad_boundary_comparison.tsv")
+        print(f"Saved hotspot comparison: {args.output_prefix}_hotspot_comparison.tsv")
 
     if not compartment_comparison.empty:
         compartment_comparison.to_csv(
@@ -1134,26 +1410,32 @@ def main():
         )
         print(f"Saved loop comparison: {args.output_prefix}_loop_comparison.tsv")
 
-    # Save raw compartment calls per condition (useful for downstream analyses)
+    # Save raw compartment calls per condition
     for condition, eigvecs in compartment_data.items():
         out_file = f"{args.output_prefix}_{condition}_compartments.tsv"
         eigvecs.to_csv(out_file, sep='\t', index=False)
         print(f"Saved {condition} compartments: {out_file}")
 
-    # Save TAD boundaries as BED
-    for condition, boundaries in tad_boundaries.items():
-        bed_file = f"{args.output_prefix}_{condition}_tad_boundaries.bed"
-        boundaries[['chrom', 'start', 'end']].to_csv(
+    # Save Cooltools TAD insulation per condition
+    for condition, ins_df in cooltools_tads.items():
+        out_file = f"{args.output_prefix}_{condition}_cooltools_insulation.tsv"
+        ins_df.to_csv(out_file, sep='\t', index=False)
+        print(f"Saved {condition} cooltools TAD insulation: {out_file}")
+
+    # Save Hotspots as BED
+    for condition, hotspots_df in hotspots.items():
+        bed_file = f"{args.output_prefix}_{condition}_hotspots.bed"
+        hotspots_df[['chrom', 'start', 'end']].to_csv(
             bed_file, sep='\t', index=False, header=False
         )
-        print(f"Saved {condition} TAD boundaries: {bed_file}")
+        print(f"Saved {condition} hotspots: {bed_file}")
 
     # Summary
     summary_stats = {
         'total_interactions_analyzed': len(all_results),
         'significant_interactions': len(significant_results),
-        'tad_boundaries_identified': sum(len(df) for df in tad_boundaries.values()),
-        'significant_tad_changes': tad_comparison['significant'].sum() if not tad_comparison.empty else 0,
+        'hotspots_identified': sum(len(df) for df in hotspots.values()),
+        'significant_hotspot_changes': hotspot_comparison['significant'].sum() if not hotspot_comparison.empty else 0,
         'significant_compartment_changes': compartment_comparison['significant'].sum() if not compartment_comparison.empty else 0,
         'total_loop_changes': loop_comparison[['gained_loops', 'lost_loops']].sum().sum() if not loop_comparison.empty else 0
     }
@@ -1165,22 +1447,29 @@ def main():
         f.write(f"Genome FASTA for GC phasing: {args.genome_fasta}\n\n")
         f.write(f"Total interactions analyzed: {summary_stats['total_interactions_analyzed']}\n")
         f.write(f"Significant differential interactions: {summary_stats['significant_interactions']}\n")
-        f.write(f"TAD boundaries identified: {summary_stats['tad_boundaries_identified']}\n")
-        f.write(f"Significant TAD boundary changes: {summary_stats['significant_tad_changes']}\n")
+        f.write(f"Hotspots identified: {summary_stats['hotspots_identified']}\n")
+        f.write(f"Significant hotspot changes: {summary_stats['significant_hotspot_changes']}\n")
         f.write(f"Significant compartment changes: {summary_stats['significant_compartment_changes']}\n")
         f.write(f"Total loop changes: {summary_stats['total_loop_changes']}\n\n")
 
-        f.write("TAD BOUNDARIES PER CONDITION:\n")
-        for condition, boundaries in tad_boundaries.items():
-            f.write(f"  {condition}: {len(boundaries)} boundaries\n")
+        f.write("HOTSPOTS PER CONDITION:\n")
+        for condition, hs_df in hotspots.items():
+            f.write(f"  {condition}: {len(hs_df)} hotspots\n")
+
+        f.write("\nCOMPARTMENTALIZATION STRENGTH:\n")
+        if not saddle_strengths_df.empty:
+            for _, row in saddle_strengths_df.iterrows():
+                f.write(f"  {row['condition']}: {row['strength']:.3f}\n")
+        else:
+            f.write("  No saddle strength data calculated.\n")
 
         f.write("\nSIGNIFICANT CHANGES PER COMPARISON:\n")
-        if not tad_comparison.empty:
-            for comparison in tad_comparison['comparison'].unique():
-                sig_count = tad_comparison[
-                    tad_comparison['comparison'] == comparison
+        if not hotspot_comparison.empty:
+            for comparison in hotspot_comparison['comparison'].unique():
+                sig_count = hotspot_comparison[
+                    hotspot_comparison['comparison'] == comparison
                 ]['significant'].sum()
-                f.write(f"  TAD boundaries {comparison}: {sig_count}\n")
+                f.write(f"  Hotspots {comparison}: {sig_count}\n")
 
         if not compartment_comparison.empty:
             for comparison in compartment_comparison['comparison'].unique():
