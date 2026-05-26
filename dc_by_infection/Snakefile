@@ -38,6 +38,63 @@ R_DIFFHIC_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/diffhic"
 PYTHON_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/micro-c"
 COOLTOOLS_ENV = "/private/groups/russelllab/jodie/miniforge3/envs/micro-c"
 
+# =============================================================================
+# diffDomain configuration (differential-TAD test, wMel vs DOX)
+# =============================================================================
+# diffDomain reads the .mcool/.cool contact matrices directly and, for each TAD
+# in the reference condition's TAD list, tests whether that TAD's contact matrix
+# is significantly reorganized in the other condition (largest singular value of
+# the normalized difference matrix > 2; Tracy-Widom / random-matrix theory),
+# then BH-corrects across TADs. The cooltools insulation output is used ONLY to
+# build the TAD list (boundaries -> domain intervals).
+#
+# IMPORTANT before first run:
+#   * DIFFDOMAIN_REPO must point at a `git clone https://github.com/Tian-Dechao/diffDomain`.
+#   * The diffDomain env needs: python3, cooler, hicexplorer (hicConvertFormat),
+#     hic-straw, TracyWidom, pandas, numpy, docopt, tqdm, matplotlib,
+#     statsmodels, h5py, seaborn.
+#   * Replicates are MERGED per condition (cooler merge sums raw counts), then
+#     ICE-balanced, then fed to diffDomain. This tests condition-level
+#     reorganization without modeling between-replicate variance -- the standard
+#     two-matrix use of diffDomain. State this in your methods.
+#   * DIFFDOMAIN_HICNORM: diffDomain extracts a balanced matrix via
+#     `hicConvertFormat --correction_name {hicnorm}`. The merge rule's
+#     `cooler balance` writes ICE weights under the name "weight", so "weight"
+#     is the safe choice here. Use "KR" only if your matrices actually carry KR
+#     vectors. Verify with `cooler dump --header` on a merged .cool.
+#   * Chrom names in the TAD bed must match the cooler exactly (bare 2L/X/...,
+#     no "chr" prefix). Both come from your dm6 pipeline, so they should match.
+#   * --min_nbin drops TADs spanning fewer than that many bins. At 64 kb the
+#     diffDomain default of 10 means only TADs >=640 kb are tested, which is
+#     large for Drosophila; DIFFDOMAIN_MINNBIN is set to 5 here.
+DIFFDOMAIN_REPO = "/private/groups/russelllab/jodie/wolbachia_induced_DE/Jacobs_et_al_2026_Wolbachia-host_genome_topology/dc_by_infection/tools/diffDomain"
+DIFFDOMAIN_ENV  = "/private/groups/russelllab/jodie/miniforge3/envs/diffDomain"
+
+DIFFDOMAIN_RESO    = 64000        # must be a resolution stored in the .mcool
+DIFFDOMAIN_HICNORM = "weight"     # "weight" (ICE, written by cooler balance) or "KR"
+DIFFDOMAIN_MINNBIN = 5            # diffDomain --min_nbin (bins per TAD floor)
+DIFFDOMAIN_F       = 0.5          # diffDomain --f (missing-value filter, 0..1)
+DIFFDOMAIN_NCORE   = 32
+DIFFDOMAIN_REFCOND = "DOX"        # reference = hic0 = TAD-list source
+DIFFDOMAIN_ALTCOND = "wMel"       # tested condition = hic1
+
+# Map condition label -> the sample whose replicates to merge.
+DIFFDOMAIN_SAMPLE = {"DOX": "JW18DOX", "wMel": "JW18wMel"}
+# Replicate suffixes that exist on disk as {sample}-{rep}.matrix.mcool
+DIFFDOMAIN_REPS = ["1", "2"]
+
+DIFFDOMAIN_OUT = f"{output_dir}/diffdomain"
+
+def _diffdomain_rep_mcools(cond):
+    """Per-replicate .mcool inputs to merge for a condition."""
+    s = DIFFDOMAIN_SAMPLE[cond]
+    return [f"{data_dir}/{s}-{rep}.matrix.mcool" for rep in DIFFDOMAIN_REPS]
+
+def _diffdomain_merged_cool(cond):
+    """Merged, balanced single-resolution .cool diffDomain reads."""
+    return f"{DIFFDOMAIN_OUT}/merged/{cond}_merged_{DIFFDOMAIN_RESO}.cool"
+
+
 # Define the complete workflow
 rule all:
     input:
@@ -60,6 +117,10 @@ rule all:
         f"{output_dir}/insulator_analysis/ndf_interaction_check.txt",
         f"{output_dir}/X_insulator_analysis/insulator/insulator_summary.txt",
         f"{output_dir}/h4k16ac_analysis/h4k16ac_summary.txt",
+
+        # diffDomain differential-TAD analysis (DOX reference vs wMel)
+        f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}_subtypes.txt",
+        f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}_BH_filtered.txt",
 
 
 
@@ -434,6 +495,9 @@ rule chromatin_structure_analysis:
         switches_plot = f"{output_dir}/chromatin_structure/chromatin_structure_compartment_switches.pdf",
         compartment_tsv = f"{output_dir}/chromatin_structure/chromatin_structure_compartment_comparison.tsv",
         analysis_summary = f"{output_dir}/chromatin_structure/chromatin_structure_analysis_summary.txt",
+        # Per-condition cooltools insulation tables (consumed by insulation_to_tads).
+        # call_tads_loops.py already writes these; declaring them here connects the DAG.
+        insulation = expand(f"{output_dir}/chromatin_structure/chromatin_structure_{{cond}}_cooltools_insulation.tsv", cond=conditions),
     params:
         conditions = " ".join(conditions),
         chromosomes = " ".join(chromosomes),
@@ -532,6 +596,177 @@ rule x_chromosome_analysis:
             --resolution {params.resolution} \
             --output_prefix {params.output_prefix}
         '''
+
+# =============================================================================
+# diffDomain rules: differential-TAD test (wMel vs DOX)
+# =============================================================================
+
+# 1. Convert cooltools insulation boundaries -> TAD intervals, per condition.
+#    Depends on chromatin_structure_analysis having written the insulation TSVs.
+rule insulation_to_tads:
+    input:
+        insulation = f"{output_dir}/chromatin_structure/chromatin_structure_{{cond}}_cooltools_insulation.tsv"
+    output:
+        tads = f"{DIFFDOMAIN_OUT}/tads/{{cond}}_tads.bed"
+    params:
+        reso         = DIFFDOMAIN_RESO,
+        min_bins     = 2,
+        chroms       = " ".join(chromosomes),
+        boundary_col = "is_boundary_150000"   # matches your insulation TSV header
+    resources:
+        mem_mb = 8000,
+        runtime = 20
+    threads: 1
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {DIFFDOMAIN_ENV}
+
+        mkdir -p {DIFFDOMAIN_OUT}/tads
+
+        python scripts/insulation_to_tads.py \
+            --insulation {input.insulation} \
+            --output {output.tads} \
+            --boundary-col {params.boundary_col} \
+            --reso {params.reso} \
+            --min-bins {params.min_bins} \
+            --drop-bad-bins \
+            --chroms {params.chroms}
+        '''
+
+
+# 1b. Merge replicates per condition into one balanced single-resolution .cool.
+#     cooler merge sums raw counts; then re-balance (ICE) the merged matrix.
+rule diffdomain_merge_replicates:
+    input:
+        reps = lambda wildcards: _diffdomain_rep_mcools(wildcards.cond)
+    output:
+        merged = f"{DIFFDOMAIN_OUT}/merged/{{cond}}_merged_{DIFFDOMAIN_RESO}.cool"
+    params:
+        reso = DIFFDOMAIN_RESO
+    resources:
+        mem_mb = 64000,
+        runtime = 120
+    threads: 8
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {DIFFDOMAIN_ENV}
+
+        mkdir -p {DIFFDOMAIN_OUT}/merged
+
+        # cooler merge needs single-resolution .cool files; extract reso/{params.reso}
+        # from each replicate .mcool into a temporary .cool first.
+        tmp_cools=""
+        for f in {input.reps}; do
+            base=$(basename "$f" .matrix.mcool)
+            tmp="{DIFFDOMAIN_OUT}/merged/${{base}}_{params.reso}.tmp.cool"
+            cooler cp "${{f}}::resolutions/{params.reso}" "${{tmp}}"
+            tmp_cools="${{tmp_cools}} ${{tmp}}"
+        done
+
+        # Sum raw counts across replicates.
+        cooler merge {output.merged} ${{tmp_cools}}
+
+        # Balance (ICE) the merged matrix; --force in case a weight column exists.
+        cooler balance -p {threads} --force {output.merged}
+
+        # Clean up temporaries.
+        rm -f ${{tmp_cools}}
+        '''
+
+
+# 2. Per-TAD Tracy-Widom test: reference TADs tested for reorganization in alt.
+#    On first run, diffDomain builds a balanced sidecar next to each merged .cool
+#    via hicConvertFormat (named ..._{reso/1000}k_{hicnorm}.cool). If you rebuild
+#    a merged .cool, delete the stale sidecar so it regenerates.
+rule diffdomain_dvsd:
+    input:
+        tads = f"{DIFFDOMAIN_OUT}/tads/{DIFFDOMAIN_REFCOND}_tads.bed",
+        hic0 = _diffdomain_merged_cool(DIFFDOMAIN_REFCOND),
+        hic1 = _diffdomain_merged_cool(DIFFDOMAIN_ALTCOND)
+    output:
+        raw = f"{DIFFDOMAIN_OUT}/raw_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}.txt"
+    params:
+        reso     = DIFFDOMAIN_RESO,
+        hicnorm  = DIFFDOMAIN_HICNORM,
+        min_nbin = DIFFDOMAIN_MINNBIN,
+        f        = DIFFDOMAIN_F,
+        repo     = DIFFDOMAIN_REPO
+    resources:
+        mem_mb = 128000,
+        runtime = 480
+    threads: DIFFDOMAIN_NCORE
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {DIFFDOMAIN_ENV}
+
+        mkdir -p {DIFFDOMAIN_OUT}
+
+        python {params.repo}/diffdomain-py3/diffdomains.py dvsd multiple \
+            {input.hic0} {input.hic1} {input.tads} \
+            --reso {params.reso} \
+            --hicnorm {params.hicnorm} \
+            --min_nbin {params.min_nbin} \
+            --f {params.f} \
+            --ncore {threads} \
+            --ofile {output.raw}
+        '''
+
+
+# 3. Benjamini-Hochberg adjustment of the raw p-values (full + BH<0.05 filtered).
+rule diffdomain_adjust:
+    input:
+        raw = f"{DIFFDOMAIN_OUT}/raw_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}.txt"
+    output:
+        adjusted = f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}.txt",
+        filtered = f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}_BH_filtered.txt"
+    params:
+        repo = DIFFDOMAIN_REPO
+    resources:
+        mem_mb = 8000,
+        runtime = 20
+    threads: 1
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {DIFFDOMAIN_ENV}
+
+        python {params.repo}/diffdomain-py3/diffdomains.py adjustment \
+            fdr_bh {input.raw} {output.adjusted}
+
+        python {params.repo}/diffdomain-py3/diffdomains.py adjustment \
+            fdr_bh {input.raw} {output.filtered} --filter true
+        '''
+
+
+# 4. Classify significant reorganized TADs into six subtypes (needs alt TAD list).
+rule diffdomain_classify:
+    input:
+        adjusted = f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}.txt",
+        alt_tads = f"{DIFFDOMAIN_OUT}/tads/{DIFFDOMAIN_ALTCOND}_tads.bed"
+    output:
+        subtypes = f"{DIFFDOMAIN_OUT}/reorganized_TADs_{DIFFDOMAIN_REFCOND}_vs_{DIFFDOMAIN_ALTCOND}_subtypes.txt"
+    params:
+        repo  = DIFFDOMAIN_REPO,
+        limit = 3 * DIFFDOMAIN_RESO   # 3-bin common-boundary tolerance (paper convention)
+    resources:
+        mem_mb = 16000,
+        runtime = 60
+    threads: 1
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {DIFFDOMAIN_ENV}
+
+        python {params.repo}/diffdomain-py3/classification.py \
+            -d {input.adjusted} \
+            -t {input.alt_tads} \
+            --limit {params.limit} \
+            --out {output.subtypes}
+        '''
+
 
 # Helper rules
 rule index_vcf:
