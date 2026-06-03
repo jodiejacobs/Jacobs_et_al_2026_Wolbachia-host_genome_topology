@@ -523,7 +523,8 @@ rule chromatin_structure_analysis:
             --resolution_compartment 64000 \
             --resolution_loop 4000 \
             --fdr_threshold 0.01 \
-            --output_prefix {params.output_prefix}
+            --output_prefix {params.output_prefix} \
+            --skip_loops
         '''
         
 # Enhancer class analysis
@@ -800,6 +801,7 @@ rule prepare_chip_peaks:
         done
         touch {output}
         '''
+
 
 # Clean up rule
 rule clean:

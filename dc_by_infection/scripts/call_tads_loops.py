@@ -18,6 +18,9 @@ ADDED: Compartment Saddle plots and compartmentalization strength (AA*BB)/(AB*BA
          - Schwarzer et al. 2017 (Nature 551:51–56)
          - Nora et al. 2017 (Cell 169(5):930–944)
          - cooltools (Venev et al.)
+ADDED: save_tad_boundary_data() exports the raw per-boundary table that underlies
+       Panel 1 of the TAD insulation summary PDF as a tab-delimited .txt file
+       with the same name stem as the PDF.
 """
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -34,7 +37,10 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 import argparse
 from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 import seaborn as sns
 from multiprocessing import Pool
 import bioframe
@@ -316,31 +322,533 @@ def calculate_cooltools_tads(mcool_files, conditions, resolution=50000, window=1
         clr = cooler.Cooler(f"{mcool_file}::resolutions/{actual_res}")
 
         # CRITICAL FIX: cooltools requires the window to be an EXACT multiple of the bin size.
-        bin_multiplier = max(3, round(window / actual_res)) # Force at least a 3-bin window
+        bin_multiplier = max(3, round(window / actual_res))  # Force at least a 3-bin window
         actual_window = actual_res * bin_multiplier
 
         try:
             print(f"    Using resolution: {actual_res} bp, actual window: {actual_window} bp ({bin_multiplier} bins)")
             ins_df = cooltools.insulation(clr, [actual_window], nproc=4)
-            
+
             # Standardize column names back to what the plotting/saving functions expect
             ins_df = ins_df.rename(columns={
                 f'is_boundary_{actual_window}': f'is_boundary_{window}',
                 f'boundary_strength_{actual_window}': f'boundary_strength_{window}',
                 f'log2_insulation_score_{actual_window}': f'log2_insulation_score_{window}'
             })
-            
+
             tads_data[condition] = ins_df
             boundary_col = f'is_boundary_{window}'
             n_boundaries = ins_df[boundary_col].sum() if boundary_col in ins_df.columns else 0
             print(f"    Found {n_boundaries} TAD boundaries for {condition}")
-            
+
         except Exception as e:
             print(f"    Warning: Failed to calculate insulation for {condition}: {e}")
             import traceback
             traceback.print_exc()
 
     return tads_data
+
+
+def save_tad_boundary_data(tads_data, window, output_prefix):
+    """
+    Write the raw per-boundary table that underlies Panel 1 of the TAD
+    insulation summary PDF.
+
+    Column definitions
+    ------------------
+    condition               sample label (e.g. wMel, DOX)
+    chrom / start / end     genomic coordinates of the boundary bin
+    boundary_strength       delta-insulation score at this boundary
+                            (how sharply the score dips; higher = sharper)
+    log2_insulation_score   raw log2 insulation score for this bin
+    boundary_class          coarse classification for quick filtering —
+                              shared   : boundary present in both this condition
+                                         and the reference (within window/2 bp)
+                              unique   : boundary present in only one condition
+                                         (gained or lost relative to reference)
+    direction               finer detail on the relationship to the reference —
+                              present_in_{ref}       reference-condition boundary
+                              {cond}_only            gained (not in reference)
+                              shared_stronger_{X}    shared; stronger in condition X
+                              shared_equal           shared; equal strength
+    reference_condition     which sample is used as the reference (DOX or
+                            uninfected if available, otherwise first condition)
+    ref_boundary_strength   boundary strength at this locus in the reference
+                            (NaN for unique boundaries)
+    strength_diff_vs_ref    boundary_strength − ref_boundary_strength
+                            (positive = stronger than reference; NaN for unique)
+    p_value                 two-sided z-score p-value of this boundary's strength
+                            vs. the all-bin boundary_strength distribution of the
+                            reference condition (genomic background null).
+                            Answers: "is this a significant boundary?"
+                            Consistent across all rows including reference.
+    diff_p_value            two-sided p-value testing whether strength_diff_vs_ref
+                            is significantly different from zero, using an empirical
+                            null: std of all shared-boundary strength differences
+                            genome-wide (null centred at 0, spread = observed noise).
+                            Answers: "does this boundary change significantly between
+                            conditions?"
+                            NaN for unique boundaries (categorically differential
+                            by definition) and for reference-condition rows.
+    p_value_note            plain-English reminder of the statistical approach.
+
+    Output file: {output_prefix}_tad_insulation_summary.txt  (TSV)
+    """
+    if not tads_data:
+        print("  save_tad_boundary_data: no TAD data — skipping.")
+        return
+
+    boundary_col   = f'is_boundary_{window}'
+    strength_col   = f'boundary_strength_{window}'
+    insulation_col = f'log2_insulation_score_{window}'
+
+    # ── choose reference condition ────────────────────────────────────────────
+    ref_condition = None
+    for cand in ['DOX', 'uninfected']:
+        if cand in tads_data:
+            ref_condition = cand
+            break
+    if ref_condition is None:
+        ref_condition = next(iter(tads_data))
+    print(f"\n  save_tad_boundary_data: reference = '{ref_condition}'")
+
+    # ── extract flagged boundaries per condition ──────────────────────────────
+    condition_boundaries = {}
+    for cond, df in tads_data.items():
+        if boundary_col in df.columns:
+            condition_boundaries[cond] = df[df[boundary_col]].copy().reset_index(drop=True)
+        else:
+            condition_boundaries[cond] = pd.DataFrame()
+            print(f"  Warning: '{boundary_col}' not found for {cond}; no boundaries extracted.")
+
+    ref_df = condition_boundaries.get(ref_condition, pd.DataFrame())
+
+    # ── reference background (ALL bins) for p_value z-score null ─────────────
+    # All bins (not just flagged boundaries) so the null represents the full
+    # genomic distribution of boundary-strength values.
+    ref_all_df = tads_data.get(ref_condition, pd.DataFrame())
+    if strength_col in ref_all_df.columns:
+        ref_bg = ref_all_df[strength_col].dropna().values
+    else:
+        ref_bg = np.array([])
+    ref_bg_mean = float(np.nanmean(ref_bg)) if len(ref_bg) > 0 else 0.0
+    ref_bg_std  = float(np.nanstd(ref_bg))  if len(ref_bg) > 0 else 1.0
+    if ref_bg_std == 0.0:
+        ref_bg_std = 1.0
+
+    # Two boundaries overlap when their centres are within half a window.
+    overlap_bp = window // 2
+
+    records = []
+
+    for cond, boundaries in condition_boundaries.items():
+        if boundaries.empty:
+            continue
+
+        for _, row in boundaries.iterrows():
+            chrom    = row['chrom']
+            start    = int(row['start'])
+            end      = int(row['end'])
+            strength = (float(row[strength_col])
+                        if strength_col in row.index and not pd.isna(row[strength_col])
+                        else np.nan)
+            insul    = (float(row[insulation_col])
+                        if insulation_col in row.index and not pd.isna(row[insulation_col])
+                        else np.nan)
+
+            # p_value: z-score of this boundary's strength vs. reference background
+            if not np.isnan(strength):
+                z_bg    = (strength - ref_bg_mean) / ref_bg_std
+                p_value = float(2.0 * (1.0 - stats.norm.cdf(abs(z_bg))))
+            else:
+                p_value = np.nan
+
+            # ── reference-condition rows ──────────────────────────────────────
+            if cond == ref_condition:
+                records.append(dict(
+                    condition             = cond,
+                    chrom                 = chrom,
+                    start                 = start,
+                    end                   = end,
+                    boundary_strength     = round(strength, 6) if not np.isnan(strength) else np.nan,
+                    log2_insulation_score = round(insul, 6)    if not np.isnan(insul)    else np.nan,
+                    boundary_class        = 'reference',
+                    direction             = f'present_in_{ref_condition}',
+                    reference_condition   = ref_condition,
+                    ref_boundary_strength = np.nan,
+                    strength_diff_vs_ref  = np.nan,
+                    p_value               = round(p_value, 6) if not np.isnan(p_value) else np.nan,
+                    diff_p_value          = np.nan,
+                    p_value_note          = ('p_value: two-sided z-score vs. all-bin background '
+                                             'of reference (self); diff_p_value: N/A for '
+                                             'reference condition'),
+                ))
+                continue
+
+            # ── non-reference rows: find overlapping reference boundary ────────
+            if not ref_df.empty and 'chrom' in ref_df.columns:
+                ref_chrom_df = ref_df[ref_df['chrom'] == chrom]
+            else:
+                ref_chrom_df = pd.DataFrame()
+
+            overlapping = pd.DataFrame()
+            if not ref_chrom_df.empty and strength_col in ref_chrom_df.columns:
+                mask = (
+                    (ref_chrom_df['start'] <= end   + overlap_bp) &
+                    (ref_chrom_df['end']   >= start - overlap_bp)
+                )
+                overlapping = ref_chrom_df[mask]
+
+            if overlapping.empty:
+                # Boundary unique to this condition (gained relative to reference)
+                boundary_class = 'unique'
+                direction      = f'{cond}_only'
+                ref_strength   = np.nan
+                strength_diff  = np.nan
+
+            else:
+                # Closest overlapping reference boundary by centre distance
+                centres  = (overlapping['start'] + overlapping['end']) / 2.0
+                this_ctr = (start + end) / 2.0
+                best_idx = (centres - this_ctr).abs().idxmin()
+                best_row = overlapping.loc[best_idx]
+
+                ref_strength = (float(best_row[strength_col])
+                                if strength_col in best_row.index
+                                and not pd.isna(best_row[strength_col])
+                                else np.nan)
+
+                boundary_class = 'shared'
+
+                if np.isnan(strength) or np.isnan(ref_strength):
+                    strength_diff = np.nan
+                    direction     = 'shared_equal'
+                else:
+                    strength_diff = strength - ref_strength
+                    if   strength_diff >  1e-9:
+                        direction = f'shared_stronger_{cond}'
+                    elif strength_diff < -1e-9:
+                        direction = f'shared_stronger_{ref_condition}'
+                    else:
+                        direction = 'shared_equal'
+
+            records.append(dict(
+                condition             = cond,
+                chrom                 = chrom,
+                start                 = start,
+                end                   = end,
+                boundary_strength     = round(strength, 6)      if not np.isnan(strength)      else np.nan,
+                log2_insulation_score = round(insul, 6)         if not np.isnan(insul)          else np.nan,
+                boundary_class        = boundary_class,
+                direction             = direction,
+                reference_condition   = ref_condition,
+                ref_boundary_strength = round(ref_strength, 6)  if not np.isnan(ref_strength)  else np.nan,
+                strength_diff_vs_ref  = round(strength_diff, 6) if not np.isnan(strength_diff) else np.nan,
+                p_value               = round(p_value, 6)       if not np.isnan(p_value)       else np.nan,
+                diff_p_value          = np.nan,   # filled in below for shared boundaries
+                p_value_note          = ('p_value: two-sided z-score vs. all-bin background of '
+                                         'reference; diff_p_value: two-sided z-score of '
+                                         'strength_diff vs. empirical null (std of all shared '
+                                         'diffs, centred at 0); both descriptive — no replicates'),
+            ))
+
+    if not records:
+        print("  save_tad_boundary_data: no boundary records to write.")
+        return
+
+    out_df = (pd.DataFrame(records)
+              .sort_values(['condition', 'chrom', 'start'])
+              .reset_index(drop=True))
+
+    # ── diff_p_value: empirical null on strength_diff_vs_ref ─────────────────
+    # Null: strength differences at shared boundaries are centred at 0;
+    # spread estimated from the observed distribution of all shared diffs.
+    # This tests "does this boundary change more than typical shared boundaries?"
+    # rather than assuming a theoretical distribution.
+    shared_mask  = out_df['boundary_class'] == 'shared'
+    shared_diffs = out_df.loc[shared_mask, 'strength_diff_vs_ref'].dropna()
+
+    if len(shared_diffs) > 1:
+        diff_null_std = float(shared_diffs.std())
+        if diff_null_std > 0:
+            z_diff = out_df.loc[shared_mask, 'strength_diff_vs_ref'] / diff_null_std
+            out_df.loc[shared_mask, 'diff_p_value'] = (
+                2.0 * (1.0 - stats.norm.cdf(z_diff.abs()))
+            ).round(6)
+            print(f"  diff_p_value null: std of {len(shared_diffs)} shared boundary "
+                  f"differences = {diff_null_std:.4f}")
+        else:
+            print("  Warning: std of shared diffs is 0; diff_p_value not computed.")
+    else:
+        print(f"  Warning: only {len(shared_diffs)} shared boundaries — "
+              f"diff_p_value empirical null unreliable, leaving as NaN.")
+
+    # ── FDR correction on diff_p_value across shared boundaries ──────────────
+    diff_pvals = out_df.loc[shared_mask, 'diff_p_value'].dropna()
+    if len(diff_pvals) > 0:
+        valid_idx = diff_pvals.index
+        _, fdr_vals, _, _ = multipletests(diff_pvals.values, method='fdr_bh')
+        out_df.loc[valid_idx, 'diff_fdr'] = fdr_vals.round(6)
+    else:
+        out_df['diff_fdr'] = np.nan
+
+    out_file = f"{output_prefix}_tad_insulation_summary.txt"
+    out_df.to_csv(out_file, sep='\t', index=False)
+    print(f"  Saved TAD boundary table → {out_file}")
+    print(f"  Rows: {len(out_df)} | Columns: {list(out_df.columns)}")
+    for cond, grp in out_df.groupby('condition'):
+        class_counts = grp['boundary_class'].value_counts().to_dict()
+        dir_counts   = grp['direction'].value_counts().to_dict()
+        print(f"    {cond}: {len(grp)} boundaries | class: {class_counts} | direction: {dir_counts}")
+
+
+def create_tad_venn_diagrams(tads_data, window, chromosomes, output_prefix):
+    """
+    Per-chromosome Venn diagrams of TAD boundary overlap between the reference
+    condition and each other condition.
+
+    Layout: summary panel (all chromosomes) + one panel per chromosome,
+    arranged in a 2 × 4 grid.  Ellipse patches in normalised [0,1] axes
+    coordinates — no equal-aspect requirement, no external venn library needed.
+
+    Outputs
+    -------
+    {output_prefix}_tad_venn_{ref}_vs_{cond}.pdf
+    {output_prefix}_tad_venn_{ref}_vs_{cond}_stats.tsv
+        Columns: chrom, comparison, {ref}_only, shared, {cond}_only,
+                 total_{ref}, total_{cond}, pct_shared_of_ref, pct_shared_of_cond
+        Row 'ALL' = genome-wide totals.
+    """
+    if not tads_data or len(tads_data) < 2:
+        print("  create_tad_venn_diagrams: need >=2 conditions -- skipping.")
+        return
+
+    boundary_col = f'is_boundary_{window}'
+    overlap_bp   = window // 2
+
+    # -- reference condition --------------------------------------------------
+    ref_condition = None
+    for cand in ['DOX', 'uninfected']:
+        if cand in tads_data:
+            ref_condition = cand
+            break
+    if ref_condition is None:
+        ref_condition = next(iter(tads_data))
+
+    non_ref = [c for c in tads_data if c != ref_condition]
+    if not non_ref:
+        print("  create_tad_venn_diagrams: no non-reference conditions -- skipping.")
+        return
+
+    # -- chromosome order -----------------------------------------------------
+    chrom_order = ['2L', '2R', '3L', '3R', 'X', '4']
+    all_chroms  = set()
+    for df in tads_data.values():
+        if 'chrom' in df.columns:
+            all_chroms.update(df['chrom'].unique())
+    plot_chroms = [c for c in chrom_order if c in all_chroms]
+    plot_chroms += sorted(c for c in all_chroms
+                          if c not in chrom_order and c in chromosomes)
+
+    # -- helpers --------------------------------------------------------------
+    def get_boundary_centres(df, chrom=None):
+        if boundary_col not in df.columns:
+            return []
+        # fillna(False): cooltools sets is_boundary NaN for low-coverage bins;
+        # boolean indexing raises ValueError on NaN without this guard.
+        mask = df[boundary_col].fillna(False).astype(bool)
+        sub = df[mask].copy()
+        if chrom is not None:
+            sub = sub[sub['chrom'] == chrom]
+        return list(zip(sub['chrom'],
+                        ((sub['start'] + sub['end']) / 2).astype(int)))
+
+    def count_overlap(ref_centres, cond_centres):
+        """Greedy nearest-neighbour matching within overlap_bp. O(n.m) -- fine at TAD scale."""
+        matched_ref  = set()
+        matched_cond = set()
+        for ri, (r_chr, r_ctr) in enumerate(ref_centres):
+            best_dist, best_ci = overlap_bp + 1, None
+            for ci, (c_chr, c_ctr) in enumerate(cond_centres):
+                if c_chr != r_chr or ci in matched_cond:
+                    continue
+                dist = abs(r_ctr - c_ctr)
+                if dist <= overlap_bp and dist < best_dist:
+                    best_dist, best_ci = dist, ci
+            if best_ci is not None:
+                matched_ref.add(ri)
+                matched_cond.add(best_ci)
+        shared    = len(matched_ref)
+        ref_only  = len(ref_centres)  - shared
+        cond_only = len(cond_centres) - len(matched_cond)
+        return shared, ref_only, cond_only
+
+    def draw_venn2(ax, left_n, shared_n, right_n,
+                   left_label, right_label, title,
+                   left_color='#3498db', right_color='#e74c3c'):
+        """
+        Two-circle Venn on ax.
+        Uses Ellipse patches in normalised [0,1] data coordinates.
+        No set_aspect('equal') -- safe inside any subplot grid.
+        """
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+
+        for cx, fc in [(0.35, left_color), (0.65, right_color)]:
+            ax.add_patch(Ellipse(
+                xy=(cx, 0.47), width=0.52, height=0.60,
+                facecolor=fc, edgecolor=fc, alpha=0.38, linewidth=1.5
+            ))
+
+        # counts
+        for x, n in [(0.15, left_n), (0.50, shared_n), (0.85, right_n)]:
+            ax.text(x, 0.47, str(n),
+                    ha='center', va='center', fontsize=13,
+                    fontweight='bold', color='#1a252f')
+
+        # condition labels
+        ax.text(0.24, 0.87, left_label,  ha='center', va='center',
+                fontsize=8, fontweight='bold', color=left_color)
+        ax.text(0.76, 0.87, right_label, ha='center', va='center',
+                fontsize=8, fontweight='bold', color=right_color)
+
+        # role labels under counts
+        ax.text(0.15, 0.10, 'lost',   ha='center', va='center',
+                fontsize=7, color=left_color,  style='italic')
+        ax.text(0.50, 0.10, 'shared', ha='center', va='center',
+                fontsize=7, color='#555555',   style='italic')
+        ax.text(0.85, 0.10, 'gained', ha='center', va='center',
+                fontsize=7, color=right_color, style='italic')
+
+        total = left_n + shared_n + right_n
+        pct   = f'({shared_n / total * 100:.0f}% shared)' if total > 0 else ''
+        ax.set_title(f'{title}\n{pct}', fontsize=9, pad=3)
+
+    error_log = f"{output_prefix}_tad_venn_errors.txt"
+    print(f"\n  create_tad_venn_diagrams: ref='{ref_condition}', "
+          f"non_ref={non_ref}, plot_chroms={plot_chroms}")
+    print(f"  boundary_col='{boundary_col}', overlap_bp={overlap_bp}")
+    for cond_check, df_check in tads_data.items():
+        has_col = boundary_col in df_check.columns
+        if has_col:
+            n_true = df_check[boundary_col].fillna(False).astype(bool).sum()
+            print(f"  {cond_check}: {boundary_col} present, {n_true} boundaries called")
+        else:
+            print(f"  {cond_check}: {boundary_col} MISSING -- cols: {list(df_check.columns)}")
+
+    # -- one figure per non-reference condition --------------------------------
+    for cond in non_ref:
+        print(f"\n  TAD Venn: {ref_condition} vs {cond}")
+        try:
+            ref_df  = tads_data[ref_condition]
+            cond_df = tads_data[cond]
+
+            n_panels = 1 + len(plot_chroms)
+            n_cols   = 4
+            n_rows   = -(-n_panels // n_cols)  # ceiling division
+
+            fig, axes = plt.subplots(n_rows, n_cols,
+                                      figsize=(n_cols * 3.5, n_rows * 3.5))
+            # reshape to 1-D regardless of n_rows
+            axes_flat = np.array(axes).reshape(-1)
+
+            # Panel 0: all chromosomes combined
+            ref_all  = get_boundary_centres(ref_df)
+            cond_all = get_boundary_centres(cond_df)
+            sh_all, ref_only_all, cond_only_all = count_overlap(ref_all, cond_all)
+
+            draw_venn2(axes_flat[0],
+                       ref_only_all, sh_all, cond_only_all,
+                       ref_condition, cond, 'All Chromosomes')
+
+            print(f"    ALL : {ref_only_all} lost | {sh_all} shared | {cond_only_all} gained")
+
+            stats_rows = [{
+                'chrom':                    'ALL',
+                'comparison':               f'{ref_condition}_vs_{cond}',
+                f'{ref_condition}_only':    ref_only_all,
+                'shared':                   sh_all,
+                f'{cond}_only':             cond_only_all,
+                f'total_{ref_condition}':   len(ref_all),
+                f'total_{cond}':            len(cond_all),
+                'pct_shared_of_ref':
+                    round(sh_all / len(ref_all)  * 100, 1) if ref_all  else 0.0,
+                'pct_shared_of_cond':
+                    round(sh_all / len(cond_all) * 100, 1) if cond_all else 0.0,
+            }]
+
+            # Per-chromosome panels
+            for i, chrom in enumerate(plot_chroms):
+                ax_idx = i + 1
+                if ax_idx >= len(axes_flat):
+                    break
+
+                ref_c  = get_boundary_centres(ref_df,  chrom)
+                cond_c = get_boundary_centres(cond_df, chrom)
+                shared, ref_only, cond_only = count_overlap(ref_c, cond_c)
+
+                draw_venn2(axes_flat[ax_idx],
+                           ref_only, shared, cond_only,
+                           ref_condition, cond, f'Chr {chrom}')
+
+                print(f"    Chr {chrom}: {ref_only} lost | {shared} shared | {cond_only} gained")
+
+                stats_rows.append({
+                    'chrom':                    chrom,
+                    'comparison':               f'{ref_condition}_vs_{cond}',
+                    f'{ref_condition}_only':    ref_only,
+                    'shared':                   shared,
+                    f'{cond}_only':             cond_only,
+                    f'total_{ref_condition}':   len(ref_c),
+                    f'total_{cond}':            len(cond_c),
+                    'pct_shared_of_ref':
+                        round(shared / len(ref_c)  * 100, 1) if ref_c  else 0.0,
+                    'pct_shared_of_cond':
+                        round(shared / len(cond_c) * 100, 1) if cond_c else 0.0,
+                })
+
+            # hide unused axes
+            for j in range(len(plot_chroms) + 1, len(axes_flat)):
+                axes_flat[j].axis('off')
+
+            plt.suptitle(f'TAD Boundary Overlap:  {ref_condition}  vs  {cond}',
+                         fontsize=13, fontweight='bold')
+            plt.tight_layout()
+
+            out_pdf = f"{output_prefix}_tad_venn_{ref_condition}_vs_{cond}.pdf"
+            plt.savefig(out_pdf, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"  Saved: {out_pdf}")
+
+            # stats TSV
+            stats_df = pd.DataFrame(stats_rows)
+            out_tsv  = f"{output_prefix}_tad_venn_{ref_condition}_vs_{cond}_stats.tsv"
+            stats_df.to_csv(out_tsv, sep='\t', index=False)
+            print(f"  Saved: {out_tsv}")
+
+            # sentence fill-ins
+            print(f"\n  === Sentence fill-ins: {ref_condition} vs {cond} ===")
+            if ref_all:
+                pct_ref  = sh_all / len(ref_all)  * 100
+                pct_cond = sh_all / len(cond_all) * 100 if cond_all else 0
+                print(f"  Overlap: {sh_all} shared of {len(ref_all)} {ref_condition} "
+                      f"boundaries ({pct_ref:.0f}% of ref, {pct_cond:.0f}% of {cond})")
+            for label, key in [('Lost  (ref-only)', f'{ref_condition}_only'),
+                                ('Gained (cond-only)', f'{cond}_only')]:
+                hits = [(r['chrom'], r[key]) for r in stats_rows[1:] if r.get(key, 0) > 0]
+                if hits:
+                    print(f"  {label}: " + ", ".join(f"Chr {c}: {n}" for c, n in hits))
+
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            msg = f"ERROR in create_tad_venn_diagrams for {cond}: {e}\n{tb}"
+            print(msg)
+            # also write to a file so errors are visible in SLURM runs
+            with open(error_log, 'a') as _ef:
+                _ef.write(msg + "\n")
+            plt.close('all')
 
 def create_tad_insulation_plots(tads_data, window, output_prefix):
     """
@@ -349,6 +857,9 @@ def create_tad_insulation_plots(tads_data, window, output_prefix):
     1. Total TAD boundaries.
     2. KDE of boundary strengths.
     3. KDE of global insulation scores.
+
+    Also writes a tab-delimited raw-data file backing Panel 1:
+        {output_prefix}_tad_insulation_summary.txt
     """
     if not tads_data:
         print("No TAD insulation data to plot")
@@ -357,13 +868,13 @@ def create_tad_insulation_plots(tads_data, window, output_prefix):
     print("\nCreating TAD insulation plots...")
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    boundary_col = f'is_boundary_{window}'
-    strength_col = f'boundary_strength_{window}'
+    boundary_col   = f'is_boundary_{window}'
+    strength_col   = f'boundary_strength_{window}'
     insulation_col = f'log2_insulation_score_{window}'
 
-    conditions = list(tads_data.keys())
+    conditions      = list(tads_data.keys())
     boundary_counts = []
-    
+
     df_list_str = []
     df_list_ins = []
 
@@ -387,7 +898,6 @@ def create_tad_insulation_plots(tads_data, window, output_prefix):
         # 3. Global insulation setup for KDE
         if insulation_col in df.columns:
             tmp_ins = df[[insulation_col]].dropna().copy()
-            # Randomly sample if too large to prevent seaborn memory issues
             if len(tmp_ins) > 50000:
                 tmp_ins = tmp_ins.sample(50000, random_state=42)
             tmp_ins.rename(columns={insulation_col: 'value'}, inplace=True)
@@ -431,6 +941,9 @@ def create_tad_insulation_plots(tads_data, window, output_prefix):
     plt.savefig(out_file, dpi=300)
     print(f"  Saved TAD insulation plots to {out_file}")
     plt.close()
+
+    # ── export the raw boundary table backing Panel 1 ────────────────────────
+    save_tad_boundary_data(tads_data, window, output_prefix)
 
 
 def calculate_compartments_all_conditions(mcool_files, conditions, chromosomes,
@@ -683,13 +1196,20 @@ def calculate_saddle_plots(mcool_files, conditions, compartment_data, chromosome
             print(f"    Calculating expected cis contacts...")
             expected = expected_cis(clr, view_df=view_df, nproc=4)
 
-            print(f"    Digitizing E1 track into {n_bins} bins...")
-            q_track, q_hist = cooltools.digitize(
-                track,
-                n_bins,
-                v_name='E1',
-                q_name='state'
+            print(f"    Digitizing E1 track into {n_bins} bins (numpy quantile method)...")
+            # Use numpy instead of cooltools.digitize to avoid version-specific
+            # API breakage (v_name was removed in cooltools 0.7.x).
+            E1_vals   = track['E1'].values
+            fin_mask  = np.isfinite(E1_vals)
+            pct_edges = np.linspace(0, 100, n_bins + 1)
+            bin_edges = np.nanpercentile(E1_vals[fin_mask], pct_edges)
+            bin_edges = np.unique(bin_edges)        # collapse duplicates
+            states    = np.zeros(len(E1_vals), dtype=int)
+            states[fin_mask] = (
+                np.digitize(E1_vals[fin_mask], bin_edges[1:], right=True) + 1
             )
+            q_track          = track.copy()
+            q_track['state'] = states
 
             print(f"    Computing saddle map...")
             interaction_sum, interaction_count = cooltools.saddle(
@@ -1063,7 +1583,7 @@ def create_compartment_switch_plots(compartment_comp, output_prefix):
             for i in range(n_perms):
                 shuffled = np.random.permutation(inf_labels)
                 null_switches[i] = np.sum(uninf_labels != shuffled)
-            
+
             mean_null = np.mean(null_switches)
             perm_p_sig = np.sum(np.abs(null_switches - mean_null) >= np.abs(sig_switched - mean_null)) / n_perms
 
@@ -1297,6 +1817,10 @@ def main():
                         help='Resolution for cooltools TAD insulation calculation')
     parser.add_argument('--window_insulation', type=int, default=150000,
                         help='Window size for cooltools TAD insulation calculation')
+    parser.add_argument('--skip_loops', action='store_true', default=False,
+                        help='Skip loop calling (cooltools dots). Useful when the '
+                             'job is memory/time-constrained — all other analyses '
+                             'still run.')
     parser.add_argument('--output_prefix', required=True,
                         help='Output file prefix')
 
@@ -1338,6 +1862,14 @@ def main():
         window=args.window_insulation
     )
 
+    # TAD visualizations run immediately so they are saved even if loops kill the job
+    print("\n" + "=" * 60)
+    print("TAD INSULATION PLOTS + VENN DIAGRAMS (saved before loop calling)")
+    print("=" * 60)
+    create_tad_insulation_plots(cooltools_tads, args.window_insulation, args.output_prefix)
+    create_tad_venn_diagrams(cooltools_tads, args.window_insulation,
+                             args.chromosomes, args.output_prefix)
+
     # Compartments (GC-phased)
     print("\n" + "=" * 60)
     print("CALCULATING COMPARTMENTS (GC-phased)")
@@ -1361,26 +1893,29 @@ def main():
         output_prefix=args.output_prefix
     )
 
-    # Loops
+    # Loops (skippable with --skip_loops)
     print("\n" + "=" * 60)
     print("CALLING LOOPS")
     print("=" * 60)
 
-    loop_data = call_loops_all_conditions(
-        args.mcool_files, args.conditions, args.chromosomes,
-        resolution=args.resolution_loop
-    )
-
-    loop_comparison = compare_loops_to_null(
-        loop_data, null_model, args.conditions, args.fdr_threshold
-    )
+    if args.skip_loops:
+        print("  --skip_loops set: skipping loop calling.")
+        loop_data       = {}
+        loop_comparison = pd.DataFrame()
+    else:
+        loop_data = call_loops_all_conditions(
+            args.mcool_files, args.conditions, args.chromosomes,
+            resolution=args.resolution_loop
+        )
+        loop_comparison = compare_loops_to_null(
+            loop_data, null_model, args.conditions, args.fdr_threshold
+        )
 
     # Visualizations
     print("\n" + "=" * 60)
     print("CREATING VISUALIZATIONS")
     print("=" * 60)
 
-    create_tad_insulation_plots(cooltools_tads, args.window_insulation, args.output_prefix)
     create_compartment_switch_plots(compartment_comparison, args.output_prefix)
     create_summary_plots(
         hotspot_comparison, compartment_comparison, loop_comparison,

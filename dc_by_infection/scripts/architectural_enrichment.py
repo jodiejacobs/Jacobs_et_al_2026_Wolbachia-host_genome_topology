@@ -56,6 +56,7 @@ ARCHITECTURAL_PROTEINS = {
 def load_chip_peaks(chip_dir):
     """Load ChIP-seq peaks for architectural proteins using file mapping"""
     chip_data = {}
+    chip_peak_counts = {}  # NEW: track peak counts per protein
     chip_dir = Path(chip_dir)
     
     for protein, file_list in CHIP_FILE_MAPPING.items():
@@ -121,10 +122,11 @@ def load_chip_peaks(chip_dir):
                     print(f"Warning: Could not combine files for {protein}: {e}")
                     # Use the first file as fallback
                     chip_data[protein] = protein_beds[0]
+            chip_peak_counts[protein] = chip_data[protein].count()  # NEW
         else:
             print(f"Warning: No valid ChIP data loaded for {protein}")
     
-    return chip_data
+    return chip_data, chip_peak_counts  # MODIFIED: return counts too
 
 def load_differential_interactions(interactions_file):
     """Load and parse differential interactions file"""
@@ -211,12 +213,13 @@ def calculate_enrichment_with_null(query_bed, reference_bed, genome_file,
                 'log2_enrichment': 0.0,
                 'p_value': 1.0,
                 'null_mean': observed,
-                'null_std': 0.0
+                'null_std': 0.0,
+                'null_overlaps': null_overlaps,  # NEW
             }
         
         # Calculate statistics
-        null_overlaps = np.array(null_overlaps)
-        expected = np.median(null_overlaps)
+        null_overlaps_arr = np.array(null_overlaps)
+        expected = np.median(null_overlaps_arr)
         
         if expected > 0:
             enrichment = observed / expected
@@ -227,9 +230,9 @@ def calculate_enrichment_with_null(query_bed, reference_bed, genome_file,
         
         # Calculate p-value (two-tailed)
         if observed > expected:
-            p_value = (np.sum(null_overlaps >= observed) + 1) / (len(null_overlaps) + 1)
+            p_value = (np.sum(null_overlaps_arr >= observed) + 1) / (len(null_overlaps_arr) + 1)
         else:
-            p_value = (np.sum(null_overlaps <= observed) + 1) / (len(null_overlaps) + 1)
+            p_value = (np.sum(null_overlaps_arr <= observed) + 1) / (len(null_overlaps_arr) + 1)
         
         p_value = min(p_value * 2, 1)  # Two-tailed
         
@@ -239,8 +242,9 @@ def calculate_enrichment_with_null(query_bed, reference_bed, genome_file,
             'enrichment': enrichment,
             'log2_enrichment': log2_enrichment,
             'p_value': p_value,
-            'null_mean': np.mean(null_overlaps),
-            'null_std': np.std(null_overlaps)
+            'null_mean': np.mean(null_overlaps_arr),
+            'null_std': np.std(null_overlaps_arr),
+            'null_overlaps': null_overlaps,  # NEW: preserve raw null values
         }
         
     except Exception as e:
@@ -252,8 +256,36 @@ def calculate_enrichment_with_null(query_bed, reference_bed, genome_file,
             'log2_enrichment': 0.0,
             'p_value': 1.0,
             'null_mean': 0.0,
-            'null_std': 0.0
+            'null_std': 0.0,
+            'null_overlaps': [],  # NEW
         }
+
+def compute_per_interval_overlap(int_windows, chip_data):
+    """For each query interval, flag which insulator proteins overlap it.
+
+    Returns a DataFrame with chrom/start/end, a 0/1 column per protein,
+    plus 'n_insulators' and 'insulators_overlapping' (comma-separated names).
+    """
+    # Sort once so every per-protein intersect returns rows in the same order
+    query_sorted = int_windows.sort()
+    overlap_df = query_sorted.to_dataframe(names=['chrom', 'start', 'end'],
+                                           dtype={'chrom': str})
+    proteins = list(chip_data.keys())
+
+    for protein, peaks in chip_data.items():
+        # -c appends, per query interval, the number of overlapping peaks
+        counted = query_sorted.intersect(peaks, c=True)
+        cdf = counted.to_dataframe(names=['chrom', 'start', 'end', 'cnt'],
+                                   dtype={'chrom': str})
+        overlap_df[protein] = (cdf['cnt'].values > 0).astype(int)
+
+    overlap_df['n_insulators'] = overlap_df[proteins].sum(axis=1)
+    overlap_df['insulators_overlapping'] = overlap_df[proteins].apply(
+        lambda row: ','.join([p for p in proteins if row[p] == 1]) or 'none',
+        axis=1
+    )
+    return overlap_df, proteins
+
 
 def analyze_differential_interactions(interactions_df, chip_data, genome_file, window_size=5000):
     """Analyze architectural protein enrichment at differential interaction sites"""
@@ -261,7 +293,7 @@ def analyze_differential_interactions(interactions_df, chip_data, genome_file, w
     
     if interactions_df is None or len(interactions_df) == 0:
         print("No interactions to analyze")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}, 0, pd.DataFrame()  # MODIFIED
     
     # Create BED regions from interactions
     int_features = create_bed_from_interactions(interactions_df)
@@ -271,9 +303,20 @@ def analyze_differential_interactions(interactions_df, chip_data, genome_file, w
         int_windows = int_features.slop(b=window_size, g=genome_file)
     except Exception as e:
         print(f"Error adding windows to interactions: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}, 0, pd.DataFrame()  # MODIFIED
+    
+    n_query_intervals = int_windows.count()  # NEW
+    
+    # NEW: which insulator proteins overlap each interval
+    print("  Computing per-interval insulator overlaps...")
+    try:
+        per_interval_df, _ = compute_per_interval_overlap(int_windows, chip_data)
+    except Exception as e:
+        print(f"  Warning: per-interval overlap failed: {e}")
+        per_interval_df = pd.DataFrame()
     
     results = []
+    null_distributions = {}  # NEW: collect null values per protein
     
     # For each protein
     for protein, peaks in chip_data.items():
@@ -284,6 +327,8 @@ def analyze_differential_interactions(interactions_df, chip_data, genome_file, w
                 int_windows, peaks, genome_file
             )
             
+            null_distributions[protein] = enrichment.get('null_overlaps', [])  # NEW
+            
             results.append({
                 'feature_type': 'differential_interactions',
                 'protein': protein,
@@ -291,14 +336,17 @@ def analyze_differential_interactions(interactions_df, chip_data, genome_file, w
                 'expected': enrichment['expected'],
                 'enrichment': enrichment['enrichment'],
                 'log2_enrichment': enrichment['log2_enrichment'],
-                'p_value': enrichment['p_value']
+                'p_value': enrichment['p_value'],
+                'null_mean': enrichment['null_mean'],  # NEW
+                'null_std': enrichment['null_std'],   # NEW
+                'n_permutations': len(enrichment.get('null_overlaps', [])),  # NEW
             })
             
         except Exception as e:
             print(f"  Error analyzing {protein}: {e}")
             continue
     
-    return pd.DataFrame(results)
+    return pd.DataFrame(results), null_distributions, n_query_intervals, per_interval_df  # MODIFIED
 
 def apply_fdr_correction(results_df):
     """Apply FDR correction to p-values"""
@@ -409,6 +457,86 @@ def create_enrichment_plots(results_df, output_prefix):
     
     print(f"Plots saved to {output_prefix}_enrichment_analysis.pdf")
 
+
+# ============================================================
+# NEW: text-file output functions for raw values
+# ============================================================
+
+def write_overlap_values(results_df, null_distributions, chip_peak_counts,
+                         n_query_intervals, output_prefix):
+    """Write the raw values used in enrichment calculations to text files."""
+
+    # File 1: per-protein observed/expected and null summary stats
+    values_file = f"{output_prefix}_overlap_values.tsv"
+    cols = ['protein', 'observed', 'expected', 'enrichment', 'log2_enrichment',
+            'p_value', 'fdr', 'significant', 'null_mean', 'null_std',
+            'n_permutations', 'n_chip_peaks', 'n_query_intervals']
+    df_out = results_df.copy()
+    df_out['n_chip_peaks'] = df_out['protein'].map(chip_peak_counts)
+    df_out['n_query_intervals'] = n_query_intervals
+    # keep only columns that exist
+    cols = [c for c in cols if c in df_out.columns]
+    df_out[cols].to_csv(values_file, sep='\t', index=False)
+    print(f"Wrote per-protein overlap values to {values_file}")
+
+    # File 2: full null distributions (one row per permutation per protein)
+    null_file = f"{output_prefix}_null_distributions.tsv"
+    with open(null_file, 'w') as f:
+        f.write("protein\tpermutation\tnull_overlap\n")
+        for protein, nulls in null_distributions.items():
+            for i, n in enumerate(nulls):
+                f.write(f"{protein}\t{i}\t{n}\n")
+    print(f"Wrote full null distributions to {null_file}")
+
+
+def write_chip_peak_counts(chip_peak_counts, output_prefix):
+    """Write the number of merged peaks loaded per protein."""
+    chip_file = f"{output_prefix}_chip_peak_counts.tsv"
+    with open(chip_file, 'w') as f:
+        f.write("protein\tcategory\tn_merged_peaks\n")
+        for protein, n in chip_peak_counts.items():
+            if protein in ARCHITECTURAL_PROTEINS['DNA_binding']:
+                cat = 'DNA_binding'
+            elif protein in ARCHITECTURAL_PROTEINS['accessory']:
+                cat = 'accessory'
+            else:
+                cat = 'other'
+            f.write(f"{protein}\t{cat}\t{n}\n")
+    print(f"Wrote ChIP peak counts to {chip_file}")
+
+
+def write_interactions_bed(interactions_df, output_prefix):
+    """Write the unique anchor BED regions used as the query."""
+    bed_file = f"{output_prefix}_interaction_anchors.bed"
+    rows = []
+    for _, r in interactions_df.iterrows():
+        rows.append([r['chr1'], int(r['start1']), int(r['end1'])])
+        rows.append([r['chr2'], int(r['start2']), int(r['end2'])])
+    bed_df = pd.DataFrame(rows, columns=['chrom', 'start', 'end']).drop_duplicates()
+    bed_df.to_csv(bed_file, sep='\t', header=False, index=False)
+    print(f"Wrote {len(bed_df)} unique anchor regions to {bed_file}")
+
+
+def write_insulator_overlap(per_interval_df, output_prefix):
+    """Write, for each query interval, which insulator proteins overlap it."""
+    if per_interval_df is None or len(per_interval_df) == 0:
+        print("No per-interval overlap data to write")
+        return
+    overlap_file = f"{output_prefix}_insulator_overlap.tsv"
+    per_interval_df.to_csv(overlap_file, sep='\t', index=False)
+    print(f"Wrote per-interval insulator overlaps to {overlap_file}")
+
+    # Also write a compact version: only intervals that overlap >=1 insulator,
+    # with just coords + the list of proteins
+    hits = per_interval_df[per_interval_df['n_insulators'] > 0]
+    compact_file = f"{output_prefix}_insulator_overlap_hits.tsv"
+    hits[['chrom', 'start', 'end', 'n_insulators', 'insulators_overlapping']].to_csv(
+        compact_file, sep='\t', index=False)
+    print(f"Wrote {len(hits)} overlapping intervals to {compact_file}")
+
+
+# ============================================================
+
 def main():
     parser = argparse.ArgumentParser(description='Analyze architectural protein enrichment at differential interactions')
     parser.add_argument('--interactions', required=True, help='Differential interactions CSV file')
@@ -429,13 +557,16 @@ def main():
     
     # Load ChIP-seq data
     print("Loading ChIP-seq data...")
-    chip_data = load_chip_peaks(args.chip_dir)
+    chip_data, chip_peak_counts = load_chip_peaks(args.chip_dir)  # MODIFIED
     
     if not chip_data:
         print("Error: No ChIP-seq data loaded")
         return 1
     
     print(f"Loaded ChIP data for {len(chip_data)} proteins: {list(chip_data.keys())}")
+    
+    # NEW: dump ChIP peak counts
+    write_chip_peak_counts(chip_peak_counts, args.output_prefix)
     
     # Load differential interactions
     interactions_df = load_differential_interactions(args.interactions)
@@ -444,9 +575,12 @@ def main():
         print("Error: Could not load interactions")
         return 1
     
+    # NEW: dump query anchor BED
+    write_interactions_bed(interactions_df, args.output_prefix)
+    
     # Analyze enrichment
     print("\nAnalyzing enrichment...")
-    results = analyze_differential_interactions(
+    results, null_distributions, n_query_intervals, per_interval_df = analyze_differential_interactions(  # MODIFIED
         interactions_df, chip_data, args.genome, args.window_size
     )
     
@@ -466,6 +600,13 @@ def main():
     print("Saving results...")
     corrected_results.to_csv(f"{args.output_prefix}_enrichment.tsv", 
                            sep='\t', index=False)
+    
+    # NEW: dump raw overlap values and null distributions
+    write_overlap_values(corrected_results, null_distributions, chip_peak_counts,
+                         n_query_intervals, args.output_prefix)
+    
+    # NEW: dump which insulator proteins overlap each interval
+    write_insulator_overlap(per_interval_df, args.output_prefix)
     
     # Summary statistics
     n_significant = corrected_results['significant'].sum() if 'significant' in corrected_results.columns else 0

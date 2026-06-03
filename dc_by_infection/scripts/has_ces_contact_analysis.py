@@ -300,23 +300,26 @@ def compare_to_null_model(real_overlap_rate, null_data, n_permutations=1000):
     
     # Calculate p-value using binomial test
     # Null hypothesis: overlap rate = null_expectation
-    from scipy.stats import binomtest
-    
-    # Estimate number of tests (interactions)
-    n_interactions = len(null_data)
-    n_overlaps = int(real_overlap_rate * n_interactions)
-    
-    result = binomtest(n_overlaps, n_interactions, null_expectation, alternative='greater')
-    p_value = result.pvalue
-    
+    # Use log-space to avoid float underflow for large n
+    import scipy.stats
+    from scipy.stats import binom
+
+    log_p_value = binom.logsf(n_overlaps - 1, n_interactions, null_expectation)
+    p_value = np.exp(log_p_value)  # may still underflow; kept for downstream compatibility
+    log10_p = log_p_value / np.log(10)
+
     print(f"  Real overlap rate: {real_overlap_rate*100:.1f}%")
     print(f"  Expected (null): {null_expectation*100:.1f}%")
     print(f"  Enrichment: {enrichment:.2f}x")
-    print(f"  P-value: {p_value:.2e}")
-    
+    if p_value == 0.0:
+        print(f"  P-value: < 1e{int(np.floor(log10_p))} (log10 p = {log10_p:.1f}, float underflow)")
+    else:
+        print(f"  P-value: {p_value:.2e}")
+
     return {
         'enrichment': enrichment,
         'p_value': p_value,
+        'log10_p_value': log10_p,
         'real_overlap_rate': real_overlap_rate,
         'null_expectation': null_expectation
     }
@@ -761,9 +764,12 @@ def main():
         f.write(f"  Overall overlap rate: {summary['overall_overlap_rate']*100:.1f}%\n")
         f.write(f"  Expected (null): {null_comparison['null_expectation']*100:.1f}%\n")
         f.write(f"  Enrichment: {summary['enrichment_vs_null']:.2f}x\n")
-        f.write(f"  P-value: {summary['p_value']:.2e}\n")
+        if summary['p_value'] == 0.0:
+            p_str = f"< 1e{int(np.floor(summary['log10_p_value']))}"
+        else:
+            p_str = f"{summary['p_value']:.2e}"
+        f.write(f"  P-value: {p_str}\n")
         f.write(f"  Significant: {'YES' if summary['p_value'] < 0.05 else 'NO'}\n\n")
-        
         f.write("Distance Analysis:\n")
         if distance_analysis:
             f.write(f"  Median distance to HAS: {summary['median_distance_to_has']/1000:.1f} kb\n")
