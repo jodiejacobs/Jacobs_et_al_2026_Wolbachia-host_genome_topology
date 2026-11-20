@@ -49,3 +49,4 @@ dc_by_infection/plots_pub/old_versions/all_sig_interactions_combined.csv
 dc_by_infection/plots_pub/old_versions/insulator/*.csv
 dc_by_infection/plots_pub/chromatin_results_figures/supplemental_tables/insulator_interactions.csv
 dc_by_infection/.claude/
+dc_by_infection/plots_pub/old_versions/volcano_trans/*.pdf
