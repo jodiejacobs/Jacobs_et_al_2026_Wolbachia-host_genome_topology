@@ -68,6 +68,7 @@ rule all:
 
         # Replicate concordance (reviewer request: n=2 replicates per condition)
         f"{output_dir}/replicate_concordance/replicate_concordance_replicate_summary.tsv",
+        f"{output_dir}/replicate_concordance/replicate_concordance_figure.pdf",
 
 
 
@@ -100,6 +101,35 @@ rule replicate_concordance:
             --chromosomes {params.chromosomes} \
             --resolutions 8000 32000 \
             --max_dist 2000000 \
+            --output_prefix {params.prefix}
+        '''
+
+# Supplemental figure for replicate concordance
+rule replicate_concordance_figure:
+    input:
+        pairwise = f"{output_dir}/replicate_concordance/replicate_concordance_pairwise.tsv",
+        mcools = expand(f"{data_dir}/{{sample}}-{{rep}}.matrix.mcool", sample=samples, rep=replicates)
+    output:
+        pdf = f"{output_dir}/replicate_concordance/replicate_concordance_figure.pdf",
+        png = f"{output_dir}/replicate_concordance/replicate_concordance_figure.png",
+    params:
+        conditions = " ".join(samples),
+        prefix = f"{output_dir}/replicate_concordance/replicate_concordance_figure",
+    resources:
+        mem_mb = 32000,
+        runtime = 60,
+    threads: 2
+    shell:
+        '''
+        source $(dirname $(dirname $(which mamba)))/etc/profile.d/mamba.sh
+        mamba activate {COOLTOOLS_ENV}
+
+        python scripts/plot_replicate_concordance.py \
+            --mcool_dir {data_dir} \
+            --pairwise {input.pairwise} \
+            --conditions {params.conditions} \
+            --scatter_res 32000 \
+            --heatmap_res 8000 \
             --output_prefix {params.prefix}
         '''
 
