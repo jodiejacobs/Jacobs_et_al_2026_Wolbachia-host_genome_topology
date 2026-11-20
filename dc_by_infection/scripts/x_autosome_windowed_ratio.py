@@ -37,7 +37,7 @@ CONDITIONS = {
     'JW18-wMel-2': 'Infected',
 }
 
-COLORS = {'Uninfected': '#d62728', 'Infected': '#1f77b4'}
+COLORS = {'Uninfected': '#8fcb85', 'Infected': '#13ab4b'}
 
 # Optional: mark loci of interest on the X chromosome (name -> coordinate in bp)
 # e.g. Ndf locus.  Set to {} to skip.
@@ -270,3 +270,112 @@ plt.tight_layout()
 out_fig = f"{save_path}/X_autosome_windowed_ratio.pdf"
 plt.savefig(out_fig, dpi=300, bbox_inches='tight')
 print(f"\nFigure saved: {out_fig}")
+
+# =============================================================================
+# Figure 2: Statistical comparison boxplot (mirrors original script)
+# Per-window ratios pooled within condition; points colored by sample.
+# NOTE: windows are not independent observations — treat stats as exploratory
+# given n=2 replicates per condition.
+# =============================================================================
+
+# Per-sample colors so replicates are visually distinguishable
+SAMPLE_COLORS = {
+    'JW18-DOX-1':  '#8fcb85',
+    'JW18-DOX-2':  '#8fcb85',
+    'JW18-wMel-1': '#13ab4b',
+    'JW18-wMel-2': '#13ab4b',
+}
+
+# Per-sample summary stats (mean ratio across windows)
+sample_summary = (
+    full_df
+    .groupby(['sample', 'condition'], as_index=False)
+    .agg(mean_ratio=('ratio', 'mean'), sd_ratio=('ratio', 'std'))
+)
+
+COND_ORDER = ['Uninfected', 'Infected']
+
+# Build significance label
+sig_text = (
+    '***' if u_pval < 0.001 else
+    '**'  if u_pval < 0.01  else
+    '*'   if u_pval < 0.05  else
+    'ns'
+)
+
+fig2, axes2 = plt.subplots(1, 2, figsize=(10, 5))
+
+# ── Panel A: bar + strip ──────────────────────────────────────────────────────
+ax_bar = axes2[0]
+
+sns.barplot(
+    data=full_df, x='condition', y='ratio', hue='condition',
+    order=COND_ORDER, palette=COLORS, alpha=0.65, errorbar='sd',
+    legend=False, ax=ax_bar,
+)
+# Per-window points, colored by sample (small, semi-transparent)
+sns.stripplot(
+    data=full_df, x='condition', y='ratio', hue='sample',
+    order=COND_ORDER, palette=SAMPLE_COLORS, size=3, alpha=0.35,
+    jitter=True, legend=False, ax=ax_bar,
+)
+# Per-sample means as larger markers on top
+for _, row in sample_summary.iterrows():
+    x_pos = COND_ORDER.index(row['condition'])
+    ax_bar.scatter(x_pos, row['mean_ratio'],
+                   color=SAMPLE_COLORS[row['sample']], s=80,
+                   edgecolors='k', linewidths=0.8, zorder=5)
+
+ax_bar.axhline(1.0, color='grey', linestyle='--', linewidth=0.8)
+ax_bar.set_ylabel('X / Autosome Contact Ratio', fontsize=11)
+ax_bar.set_xlabel('')
+ax_bar.set_title('X/A Ratio per Window\n(bar = mean ± SD across windows)', fontsize=10)
+
+# Significance bracket
+y_top  = full_df['ratio'].max()
+y_line = y_top * 1.06
+y_text = y_top * 1.10
+ax_bar.plot([0, 0, 1, 1], [y_line, y_line + y_top * 0.01,
+                             y_line + y_top * 0.01, y_line], 'k-', linewidth=1)
+ax_bar.text(0.5, y_text, f"{sig_text}  MW P={u_pval:.2e}\nt-test P={t_pval:.2e}",
+            ha='center', va='bottom', fontsize=9)
+ax_bar.set_ylim(top=y_top * 1.22)
+
+# ── Panel B: box + strip ──────────────────────────────────────────────────────
+ax_box = axes2[1]
+
+sns.boxplot(
+    data=full_df, x='condition', y='ratio', hue='condition',
+    order=COND_ORDER, palette=COLORS, legend=False,
+    fliersize=0, ax=ax_box,           # hide boxplot outlier markers; strip handles them
+)
+sns.stripplot(
+    data=full_df, x='condition', y='ratio', hue='sample',
+    order=COND_ORDER, palette=SAMPLE_COLORS, size=3, alpha=0.35,
+    jitter=True, legend=False, ax=ax_box,
+)
+# Per-sample means
+for _, row in sample_summary.iterrows():
+    x_pos = COND_ORDER.index(row['condition'])
+    ax_box.scatter(x_pos, row['mean_ratio'],
+                   color=SAMPLE_COLORS[row['sample']], s=80,
+                   edgecolors='k', linewidths=0.8, zorder=5,
+                   label=row['sample'])
+
+ax_box.axhline(1.0, color='grey', linestyle='--', linewidth=0.8)
+ax_box.set_ylabel('X / Autosome Contact Ratio', fontsize=11)
+ax_box.set_xlabel('')
+ax_box.set_title('Distribution of Per-Window X/A Ratios\n(large dots = per-sample means)', fontsize=10)
+
+# Legend for samples
+handles = [
+    plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=c,
+               markeredgecolor='k', markersize=8, label=s)
+    for s, c in SAMPLE_COLORS.items()
+]
+ax_box.legend(handles=handles, title='Sample', frameon=False, fontsize=8, title_fontsize=8)
+
+plt.tight_layout()
+out_fig2 = f"{save_path}/X_autosome_windowed_ratio_stats.pdf"
+plt.savefig(out_fig2, dpi=300, bbox_inches='tight')
+print(f"Stats figure saved: {out_fig2}")

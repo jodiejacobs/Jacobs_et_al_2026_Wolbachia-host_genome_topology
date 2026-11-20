@@ -364,8 +364,8 @@ def analyze_by_logfc_direction(interactions_df, overlap_results):
     merged['interaction_type'] = np.where(merged['chr1'] == merged['chr2'], 'cis', 'trans')
     
     # Split by direction
-    jw18_uninf = merged[merged['logFC'] > 0]
-    jw18_wmel = merged[merged['logFC'] < 0]
+    jw18_uninf = merged[merged['logFC'] < 0]
+    jw18_wmel = merged[merged['logFC'] > 0]
     
     # Calculate statistics
     results = {
@@ -530,8 +530,8 @@ def create_visualization(merged_df, direction_results, peaks_per_int_results, ou
     plt.rcParams.update({'font.size': 6})
     
     # Prepare data for boxplots
-    uninf_peaks = merged_df[merged_df['logFC'] > 0]['total_peaks'].values
-    wmel_peaks = merged_df[merged_df['logFC'] < 0]['total_peaks'].values
+    uninf_peaks = merged_df[merged_df['logFC'] < 0]['total_peaks'].values
+    wmel_peaks = merged_df[merged_df['logFC'] > 0]['total_peaks'].values
     
     print(f"  JW18 uninf peaks: n={len(uninf_peaks)}, range={uninf_peaks.min()}-{uninf_peaks.max()}")
     print(f"  JW18 wMel peaks: n={len(wmel_peaks)}, range={wmel_peaks.min()}-{wmel_peaks.max()}")
@@ -548,37 +548,24 @@ def create_visualization(merged_df, direction_results, peaks_per_int_results, ou
                      positions=[0, 1],
                      widths=0.6,
                      patch_artist=True,
-                     showfliers=False,  # We'll add points manually
+                     showfliers=False,
                      boxprops=dict(facecolor='white', edgecolor='black', linewidth=1),
                      medianprops=dict(color='black', linewidth=1.5),
                      whiskerprops=dict(color='black', linewidth=1),
                      capprops=dict(color='black', linewidth=1))
     
-    # Color the boxes
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.6)
     
-    # Add individual points with jitter
     add_strip_to_boxplot(ax, [uninf_peaks, wmel_peaks], [0, 1], colors, 
                          jitter=0.08, alpha=0.5, size=8)
     
     ax.set_xticks([0, 1])
     ax.set_xticklabels(labels)
-    ax.set_ylabel('Number of H3K36me3 Peaks', fontsize=6)
-    ax.set_title('H3K36me3 Peak Count by Genotype', fontsize=7, fontweight='bold')
+    ax.set_ylabel('H3K36me3 Peaks per Interaction', fontsize=6)
+    ax.set_title('H3K36me3 Enrichment per Interaction', fontsize=7, fontweight='bold')
     ax.tick_params(labelsize=6)
-    
-    # Add Mann-Whitney U test
-    if len(uninf_peaks) > 0 and len(wmel_peaks) > 0:
-        try:
-            u_stat, p_val = stats.mannwhitneyu(uninf_peaks, wmel_peaks, alternative='two-sided')
-            ax.text(0.95, 0.95, f'p = {p_val:.2e}', 
-                    transform=ax.transAxes, ha='right', va='top', fontsize=5,
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='none'))
-        except Exception as e:
-            print(f"Warning: Could not compute Mann-Whitney U test: {e}")
-    
     # Plot 2: NEW - Peaks per Interaction (Bar plot with error bars)
     ax = axes[0, 1]
     ax.patch.set_alpha(0)
@@ -623,8 +610,8 @@ def create_visualization(merged_df, direction_results, peaks_per_int_results, ou
     ax.patch.set_alpha(0)
     
     # Color points by genotype
-    uninf_mask = merged_df['logFC'] > 0
-    wmel_mask = merged_df['logFC'] < 0
+    uninf_mask = merged_df['logFC'] < 0
+    wmel_mask = merged_df['logFC'] > 0
     
     ax.scatter(merged_df[uninf_mask]['logFC'], merged_df[uninf_mask]['total_peaks'], 
                c=color_jw18_uninf, alpha=0.5, s=15, label='JW18 uninf.', edgecolors='none')
@@ -734,10 +721,10 @@ def create_visualization(merged_df, direction_results, peaks_per_int_results, ou
     ax = axes[0, 1]
     ax.patch.set_alpha(0)
     
-    uninf_a1 = merged_df[merged_df['logFC'] > 0]['n_peaks_anchor1'].values
-    uninf_a2 = merged_df[merged_df['logFC'] > 0]['n_peaks_anchor2'].values
-    wmel_a1 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor1'].values
-    wmel_a2 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor2'].values
+    uninf_a1 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor1'].values
+    uninf_a2 = merged_df[merged_df['logFC'] < 0]['n_peaks_anchor2'].values
+    wmel_a1 = merged_df[merged_df['logFC'] > 0]['n_peaks_anchor1'].values
+    wmel_a2 = merged_df[merged_df['logFC'] > 0]['n_peaks_anchor2'].values
     
     if all(len(arr) > 0 for arr in [uninf_a1, uninf_a2, wmel_a1, wmel_a2]):
         bp = ax.boxplot([uninf_a1, uninf_a2, wmel_a1, wmel_a2],
@@ -837,8 +824,8 @@ def analyze_peaks_per_interaction(interactions_df, overlap_results, h3k36me3_pea
             merged[col] = overlap_clean[col].values
     
     # Split by direction
-    jw18_uninf = merged[merged['logFC'] > 0]
-    jw18_wmel = merged[merged['logFC'] < 0]
+    jw18_uninf = merged[merged['logFC'] < 0]
+    jw18_wmel = merged[merged['logFC'] > 0]
     
     # Calculate peaks per interaction
     results = {
