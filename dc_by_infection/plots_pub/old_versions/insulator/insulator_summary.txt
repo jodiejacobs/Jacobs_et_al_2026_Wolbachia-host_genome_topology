@@ -1,0 +1,82 @@
+INSULATOR ENRICHMENT ANALYSIS SUMMARY
+============================================================
+
+Analysis Parameters:
+  Window size: 1000 bp
+  Permutations: 100
+  FDR threshold: 0.05
+
+Data Summary:
+  Total interactions: 1053948
+  Significant interactions: 1031772
+
+============================================================
+GENOMIC BACKGROUND MODEL
+============================================================
+
+This analysis answers: Given the genome-wide distribution of
+insulators, what is the expected probability of overlap?
+
+Genome Information:
+  Total genome size: 137,547,960 bp
+  Insulator coverage: 14,500,150 bp
+  Genome-wide insulator density: 10.54%
+
+Any Anchor Overlap:
+  Expected: 216818.7 interactions
+  Observed: 608416 interactions
+  Enrichment: 2.81x
+  P-value: 0.0000e+00
+  Significant: YES
+
+Both Anchors Overlap:
+  Expected: 12771.6 interactions
+  Observed: 275212 interactions
+  Enrichment: 21.55x
+  P-value: 0.0000e+00
+  Significant: YES
+
+============================================================
+PERMUTATION TEST RESULTS
+============================================================
+
+
+Class_I Insulators:
+  Number of sites: 4771
+  Observed overlap: 45.2%
+  Expected overlap (permutation): 18.2%
+  Enrichment: 2.49x
+  Z-score: 101.39
+  P-value: 0.0099
+  Significant: YES
+
+Class_II Insulators:
+  Number of sites: 2911
+  Observed overlap: 38.3%
+  Expected overlap (permutation): 13.9%
+  Enrichment: 2.75x
+  Z-score: 100.87
+  P-value: 0.0099
+  Significant: YES
+
+All Insulators:
+  Number of sites: 7682
+  Observed overlap: 59.0%
+  Expected overlap (permutation): 26.6%
+  Enrichment: 2.22x
+  Z-score: 101.33
+  P-value: 0.0099
+  Significant: YES
+
+============================================================
+INTERPRETATION
+============================================================
+
+Background Model: Tests if interactions overlap insulators more than
+expected based on genome-wide insulator density.
+
+Permutation Test: Tests if interactions overlap insulators more than
+random genomic regions of the same size.
+
+Both tests are significant, indicating strong evidence that
+differential interactions are enriched at insulator sites.

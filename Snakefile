@@ -37,6 +37,10 @@ COOLTOOLS_ENV = "/private/home/jomojaco/miniforge3/envs/micro-c"
 # Define the complete workflow
 rule all:
     input:
+        # Replicate concordance (reviewer: n=2 replicates)
+        f"{output_dir}/replicate_concordance/replicate_concordance_replicate_summary.tsv",
+        f"{output_dir}/replicate_concordance/replicate_concordance_concordance.pdf",
+
         # Multi-resolution diffHic analysis outputs
         expand(f"{output_dir}/diffhic_results/res_{{resolution}}/differential_interactions_infectionJW18wMel.csv", 
                resolution=RESOLUTIONS),
@@ -91,6 +95,38 @@ rule identify_contacts:
         mkdir -p {output_dir}/contacts/
         bash scripts/extract_multi_resolution_v5.sh \
         {input.cooler1} {input.cooler2} {output.contacts}
+        '''
+
+# Replicate concordance: rep1 vs rep2 Pearson r and SCC per condition and resolution
+rule replicate_concordance:
+    input:
+        mcools = expand(f"{data_dir}/{{sample}}-{{rep}}.matrix.mcool", sample=samples, rep=replicates)
+    output:
+        summary = f"{output_dir}/replicate_concordance/replicate_concordance_replicate_summary.tsv",
+        pairwise = f"{output_dir}/replicate_concordance/replicate_concordance_pairwise.tsv",
+        plot = f"{output_dir}/replicate_concordance/replicate_concordance_concordance.pdf"
+    params:
+        samples = " ".join(samples),
+        chromosomes = " ".join(c for c in chromosomes if c != "Y"),
+        prefix = f"{output_dir}/replicate_concordance/replicate_concordance"
+    resources:
+        mem_mb = 64000,
+        runtime = 240
+    threads: 4
+    shell:
+        '''
+        source $(dirname $(dirname $(which conda)))/etc/profile.d/conda.sh
+        conda activate {COOLTOOLS_ENV}
+
+        mkdir -p {output_dir}/replicate_concordance
+
+        python scripts/replicate_concordance.py \
+            --mcool_dir {data_dir} \
+            --samples {params.samples} \
+            --chromosomes {params.chromosomes} \
+            --resolutions 8000 32000 \
+            --max_dist 2000000 \
+            --output_prefix {params.prefix}
         '''
 
 # Rule to run diffHic analysis for each resolution separately

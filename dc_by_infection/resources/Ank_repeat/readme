@@ -1,0 +1,1 @@
+grep "^>" Ank_flybase.fa | perl -ne 'if (/>([\w]+).*loc=([\w]+):(\d+)\.\.(\d+).*name=([^;]+)/) { print "$2\t", $3-1, "\t$4\t$5\t.\t.\n" }' > Ank_flybase.bed

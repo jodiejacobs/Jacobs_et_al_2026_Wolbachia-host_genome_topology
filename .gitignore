@@ -42,3 +42,10 @@ CLAUDE.md
 **/CLAUDE.md
 dc_by_infection/plots_pub/*.svg
 dc_by_infection/plots_pub/*_compressed.png # optional, if other large PNGs
+
+# Files over GitHub's 100 MB limit
+dc_by_infection/plots_pub/**/*.svg
+dc_by_infection/plots_pub/old_versions/all_sig_interactions_combined.csv
+dc_by_infection/plots_pub/old_versions/insulator/*.csv
+dc_by_infection/plots_pub/chromatin_results_figures/supplemental_tables/insulator_interactions.csv
+dc_by_infection/.claude/
